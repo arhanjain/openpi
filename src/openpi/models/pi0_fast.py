@@ -278,11 +278,6 @@ class Pi0FAST(_model.BaseModel):
                 lambda _: jnp.argmax(last_logit, axis=-1),
                 operand=None,
             )
-            # if temperature > 0.0:
-            #     last_logit = last_logit / temperature
-            #     token = jax.random.categorical(rng, last_logit, axis=-1)
-            # else:
-            #     token = jnp.argmax(last_logit, axis=-1)
             output_tokens = put_along_last_axis(output_tokens, jnp.broadcast_to(step, (token.shape[0], 1)), token)
 
             # Check for early stopping --> stop if all batch elements have EOS token
