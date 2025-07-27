@@ -183,6 +183,25 @@ class ResizeImages(DataTransformFn):
         data["image"] = {k: image_tools.resize_with_pad(v, self.height, self.width) for k, v in data["image"].items()}
         return data
 
+import cv2
+import random
+@dataclasses.dataclass(frozen=True)
+class GaussianBlurImages(DataTransformFn):
+    """Applies a random Gaussian blur to each image in data['image']."""
+    min_sigma: float = 0.1
+    max_sigma: float = 2.0
+    kernel_size: int = 5  # Must be odd
+
+    def __call__(self, data: DataDict) -> DataDict:
+        blurred = {}
+        for k, img in data["image"].items():
+            sigma = random.uniform(self.min_sigma, self.max_sigma)
+            # OpenCV requires kernel size to be odd and positive
+            blurred_img = cv2.GaussianBlur(img, (self.kernel_size, self.kernel_size), sigma)
+            blurred[k] = blurred_img
+        data["image"] = blurred
+        return data
+
 
 @dataclasses.dataclass(frozen=True)
 class SubsampleActions(DataTransformFn):

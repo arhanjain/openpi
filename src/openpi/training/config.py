@@ -366,6 +366,12 @@ class RLDSDroidDataConfig(DataConfigFactory):
             )
 
         model_transforms = ModelTransformFactory()(model_config)
+        model_transforms = model_transforms.push(
+            inputs=[
+                _transforms.GaussianBlurImages(),
+            ],
+        )
+
 
         assert self.rlds_data_dir is not None, "Need to set rlds data dir for RLDS data loader."
 
@@ -660,9 +666,85 @@ _CONFIGS = [
         weight_loader=weight_loaders.CheckpointWeightLoader("gs://openpi-assets/checkpoints/pi0_base/params"),
         num_train_steps=20_000,
     ),
+    TrainConfig(
+        name="pi0_fast_droid_jointpos",
+        model=pi0_fast.Pi0FASTConfig(action_dim=8, action_horizon=10),
+        data=SimpleDataConfig(
+            assets=AssetsConfig(asset_id="droid"),
+            data_transforms=lambda model: _transforms.Group(
+                inputs=[droid_policy.DroidInputs(action_dim=model.action_dim, model_type=ModelType.PI0_FAST)],
+                outputs=[
+                    _transforms.AbsoluteActions(_transforms.make_bool_mask(7, -1)),
+                    droid_policy.DroidOutputs(),
+                ],
+            ),
+            base_config=DataConfig(
+                prompt_from_task=True,
+            ),
+        ),
+    ),
+
     #
     # Fine-tuning DROID configs.
     #
+
+    TrainConfig(
+        name="pi0_fast_droid_jointpos_encoderfinetune",
+        model=pi0_fast.Pi0FASTConfig(
+            action_dim=8,
+            action_horizon=10,
+            max_token_len=180,
+        ),
+        data=RLDSDroidDataConfig(
+            repo_id="droid",
+            rlds_data_dir="/mnt/bigguy",
+            action_space=droid_rlds_dataset.DroidActionSpace.JOINT_POSITION,
+        ),
+        weight_loader=weight_loaders.CheckpointWeightLoader("s3://openpi-assets-simeval/pi0_fast_droid_jointpos/params"),
+        freeze_filter=pi0_fast.Pi0FASTConfig(
+              action_dim=8, action_horizon=10, max_token_len=180, paligemma_variant="gemma_2b"
+              ).get_freeze_filter(mode="encoder"),
+        lr_schedule=_optimizer.CosineDecaySchedule(
+            warmup_steps=1_000,
+            peak_lr=5e-5,
+            decay_steps=1_000_000,
+            decay_lr=5e-5,
+        ),
+        num_train_steps=240_000,
+        batch_size=128,
+        log_interval=100,
+        save_interval=5000,
+        keep_period=10_000,
+        num_workers=0,  # Important: RLDS DataLoader requires num_workers=0, handles multi-processing internally
+    ),
+    
+    TrainConfig(
+        name="pi0_fast_droid_jointpos_fullfinetune",
+        model=pi0_fast.Pi0FASTConfig(
+            action_dim=8,
+            action_horizon=10,
+            max_token_len=180,
+        ),
+        data=RLDSDroidDataConfig(
+            repo_id="droid",
+            rlds_data_dir="/mnt/bigguy",
+            action_space=droid_rlds_dataset.DroidActionSpace.JOINT_POSITION,
+        ),
+        weight_loader=weight_loaders.CheckpointWeightLoader("s3://openpi-assets-simeval/pi0_fast_droid_jointpos/params"),
+        lr_schedule=_optimizer.CosineDecaySchedule(
+            warmup_steps=1_000,
+            peak_lr=5e-5,
+            decay_steps=1_000_000,
+            decay_lr=5e-5,
+        ),
+        num_train_steps=240_000,
+        batch_size=128,
+        log_interval=100,
+        save_interval=5000,
+        keep_period=10_000,
+        num_workers=0,  # Important: RLDS DataLoader requires num_workers=0, handles multi-processing internally
+    ),
+
     TrainConfig(
         name="pi0_fast_droid_finetune",
         model=pi0_fast.Pi0FASTConfig(

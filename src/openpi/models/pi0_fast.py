@@ -118,10 +118,12 @@ class Pi0FASTConfig(_model.BaseModelConfig):
 
         return observation_spec, action_spec
 
-    def get_freeze_filter(self) -> nnx.filterlib.Filter:
+    def get_freeze_filter(self, mode:str = "all") -> nnx.filterlib.Filter:
         """Returns the freeze filter based on the model config."""
         if "lora" in self.paligemma_variant:
             return nnx.All(nnx_utils.PathRegex(".*llm.*"), nnx.Not(nnx_utils.PathRegex(".*lora.*")))
+        elif "encoder" in mode:
+            return nnx.All(nnx_utils.PathRegex(".*llm.*"))
         return nnx.Nothing
 
 
