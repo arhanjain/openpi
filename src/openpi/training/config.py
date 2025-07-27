@@ -663,6 +663,24 @@ _CONFIGS = [
         weight_loader=weight_loaders.CheckpointWeightLoader("gs://openpi-assets/checkpoints/pi0_base/params"),
         num_train_steps=20_000,
     ),
+    TrainConfig(
+        name="pi0_fast_droid_jointpos",
+        model=pi0_fast.Pi0FASTConfig(action_dim=8, action_horizon=10),
+        data=SimpleDataConfig(
+            assets=AssetsConfig(asset_id="droid"),
+            data_transforms=lambda model: _transforms.Group(
+                inputs=[droid_policy.DroidInputs(action_dim=model.action_dim, model_type=ModelType.PI0_FAST)],
+                outputs=[
+                    _transforms.AbsoluteActions(_transforms.make_bool_mask(7, -1)),
+                    droid_policy.DroidOutputs(),
+                ],
+            ),
+            base_config=DataConfig(
+                prompt_from_task=True,
+            ),
+        ),
+    ),
+
     #
     # Fine-tuning DROID configs.
     #

@@ -51,6 +51,9 @@ class Args:
     # Record the policy's behavior for debugging.
     record: bool = False
 
+    # Sample temperature
+    temperature: float = 0.0
+
     # Specifies how to load the policy. If not provided, the default policy for the environment will be used.
     policy: Checkpoint | Default = dataclasses.field(default_factory=Default)
 
@@ -90,7 +93,12 @@ def create_policy(args: Args) -> _policy.Policy:
     match args.policy:
         case Checkpoint():
             return _policy_config.create_trained_policy(
-                _config.get_config(args.policy.config), args.policy.dir, default_prompt=args.default_prompt
+                _config.get_config(args.policy.config), 
+                args.policy.dir, 
+                default_prompt=args.default_prompt,
+                sample_kwargs = {
+                    "temperature": args.temperature
+                }
             )
         case Default():
             return create_default_policy(args.env, default_prompt=args.default_prompt)
