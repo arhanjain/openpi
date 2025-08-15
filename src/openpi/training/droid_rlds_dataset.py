@@ -116,6 +116,10 @@ class DroidRldsDataset:
 
         dataset = dataset.traj_map(chunk_actions, num_parallel_calls)
 
+        # Flatten: map from trajectory dataset to dataset of individual action chunks
+        dataset = dataset.flatten(num_parallel_calls=num_parallel_calls)
+
+        # Filter out frames where actions are idle. Must be done after flattening, as filter should apply per-frame.
         def filter_idle(traj):
             """Filter out chunks with idle actions.
             --> we filter if at least first half of chunk does not move.
@@ -126,9 +130,6 @@ class DroidRldsDataset:
             return tf.reduce_any(tf.abs(traj["actions"][: action_chunk_size // 2]) > 1e-3)
 
         dataset = dataset.filter(filter_idle)
-
-        # Flatten: map from trajectory dataset to dataset of individual action chunks
-        dataset = dataset.flatten(num_parallel_calls=num_parallel_calls)
 
         # Decode images: RLDS saves encoded images, only decode now for efficiency
         def decode_images(traj):
