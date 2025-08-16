@@ -375,11 +375,6 @@ class RLDSDroidDataConfig(DataConfigFactory):
             )
 
         model_transforms = ModelTransformFactory()(model_config)
-        model_transforms = model_transforms.push(
-            inputs=[
-                _transforms.GaussianBlurImages(),
-            ],
-        )
 
 
         assert self.rlds_data_dir is not None, "Need to set rlds data dir for RLDS data loader."
@@ -750,7 +745,7 @@ _CONFIGS = [
         batch_size=128,
         log_interval=100,
         save_interval=5000,
-        keep_period=10_000,
+        keep_period=5_000,
         num_workers=0,  # Important: RLDS DataLoader requires num_workers=0, handles multi-processing internally
     ),
 

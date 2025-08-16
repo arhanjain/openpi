@@ -5,6 +5,8 @@ from typing import Protocol, TypeAlias, TypeVar, runtime_checkable
 
 import flax.traverse_util as traverse_util
 import jax
+import cv2
+import random
 import numpy as np
 from openpi_client import image_tools
 
@@ -183,8 +185,6 @@ class ResizeImages(DataTransformFn):
         data["image"] = {k: image_tools.resize_with_pad(v, self.height, self.width) for k, v in data["image"].items()}
         return data
 
-import cv2
-import random
 @dataclasses.dataclass(frozen=True)
 class GaussianBlurImages(DataTransformFn):
     """Applies a random Gaussian blur to each image in data['image']."""
