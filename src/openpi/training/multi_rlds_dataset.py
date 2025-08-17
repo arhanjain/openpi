@@ -147,6 +147,8 @@ class MultiRldsDataset(DroidRldsDataset):
                 return traj
 
             dataset = dataset.frame_map(decode_images, num_parallel_calls)
+            # Shuffle
+            dataset = dataset.shuffle(shuffle_buffer_size)
 
             return dataset
         
@@ -154,16 +156,17 @@ class MultiRldsDataset(DroidRldsDataset):
         print(datasets)
         print(action_space)
         print('_____________________')
-        datasets_only = [prepare_dataset(ds_name) for ds_name, weight in datasets]
-        weights = [weight for ds_name, weight in datasets]
-        dataset: dl.DLataset = dl.DLataset.sample_from_datasets(datasets_only, weights)
-        # Shuffle, batch
-        dataset = dataset.shuffle(shuffle_buffer_size)
-        dataset = dataset.batch(batch_size)
-        # Note =>> Seems to reduce memory usage without affecting speed?
-        dataset = dataset.with_ram_budget(1)
 
-        self.dataset = dataset
+        ds_streams = [prepare_dataset(ds_name) for ds_name, _ in datasets]
+        weights = [weight for _, weight in datasets]
+
+        final_ds = dl.DLataset.sample_from_datasets(ds_streams, weights=weights)
+        final_ds = final_ds.batch(batch_size)
+
+        # Note =>> Seems to reduce memory usage without affecting speed?
+        final_ds = final_ds.with_ram_budget(1)
+
+        self.dataset = final_ds
         self.batch_size = batch_size
         self.shuffle = shuffle
 
