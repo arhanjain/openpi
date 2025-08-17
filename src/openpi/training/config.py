@@ -6,7 +6,7 @@ import dataclasses
 import difflib
 import logging
 import pathlib
-from typing import Any, Protocol, TypeAlias
+from typing import Any, Protocol, TypeAlias, List, Tuple
 
 import etils.epath as epath
 import flax.nnx as nnx
@@ -91,6 +91,7 @@ class DataConfig:
 
     # Only used for RLDS data loader (ie currently only used for DROID).
     rlds_data_dir: str | None = None
+    datasets: List[Tuple[str, float]] | None = None
     # Action space for DROID dataset.
     action_space: droid_rlds_dataset.DroidActionSpace | None = None
 
@@ -342,6 +343,7 @@ class RLDSDroidDataConfig(DataConfigFactory):
     """
 
     rlds_data_dir: str | None = None
+    datasets: List[Tuple[str, float]] | None = None
     action_space: droid_rlds_dataset.DroidActionSpace | None = None
 
     @override
@@ -386,6 +388,7 @@ class RLDSDroidDataConfig(DataConfigFactory):
             model_transforms=model_transforms,
             use_quantile_norm=model_config.model_type == ModelType.PI0_FAST,
             rlds_data_dir=self.rlds_data_dir,
+            datasets=self.datasets,
             action_space=self.action_space,
         )
 
@@ -730,11 +733,19 @@ _CONFIGS = [
             max_token_len=180,
         ),
         data=RLDSDroidDataConfig(
-            repo_id="droid",
+            repo_id="BLANK",
+            assets=AssetsConfig(
+                assets_dir="gs://openpi-assets-simeval/pi0_fast_droid_jointpos/assets",
+                asset_id="droid",
+            ),
+            datasets=[
+                ("droid_sim_dataset", 0.1),
+                ("droid", 0.9),
+            ],
             rlds_data_dir="/mnt/bigguy",
             action_space=droid_rlds_dataset.DroidActionSpace.JOINT_POSITION,
         ),
-        weight_loader=weight_loaders.CheckpointWeightLoader("s3://openpi-assets-simeval/pi0_fast_droid_jointpos/params"),
+        weight_loader=weight_loaders.CheckpointWeightLoader("gs://openpi-assets-simeval/pi0_fast_droid_jointpos/params"),
         lr_schedule=_optimizer.CosineDecaySchedule(
             warmup_steps=1_000,
             peak_lr=5e-5,

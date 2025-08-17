@@ -229,7 +229,7 @@ def main(config: _config.TrainConfig):
     # Log images from first batch to sanity check.
     images_to_log = [
         wandb.Image(np.concatenate([np.array(img[i]) for img in batch[0].images.values()], axis=1))
-        for i in range(min(5, len(next(iter(batch[0].images.values())))))
+        for i in range(min(12, len(next(iter(batch[0].images.values())))))
     ]
     wandb.log({"camera_views": images_to_log}, step=0)
 

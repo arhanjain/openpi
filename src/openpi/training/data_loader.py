@@ -158,6 +158,16 @@ def create_rlds_dataset(
     shuffle: bool = False,
 ) -> Dataset:
     # At the moment, we only support DROID for RLDS datasets.
+    if data_config.datasets is not None:
+        from openpi.training.multi_rlds_dataset import MultiRldsDataset
+        return MultiRldsDataset(
+            data_dir=data_config.rlds_data_dir,
+            batch_size=batch_size,
+            shuffle=shuffle,
+            action_chunk_size=action_horizon,
+            action_space=data_config.action_space,
+            datasets=data_config.datasets
+        )
     return DroidRldsDataset(
         data_dir=data_config.rlds_data_dir,
         batch_size=batch_size,
