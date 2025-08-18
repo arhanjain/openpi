@@ -724,6 +724,62 @@ _CONFIGS = [
         keep_period=10_000,
         num_workers=0,  # Important: RLDS DataLoader requires num_workers=0, handles multi-processing internally
     ),
+
+    # TrainConfig(
+    #     name="paligemma_binning_droid_jointpos_fullfinetune",
+    #     model=pi0_fast.Pi0FASTConfig(action_dim=8, action_horizon=15, max_token_len=400),
+    #     data=SimpleDataConfig(
+    #         assets=AssetsConfig(asset_id="droid"),
+    #         data_transforms=lambda model: _transforms.Group(
+    #             inputs=[droid_policy.DroidInputs(action_dim=model.action_dim, model_type=ModelType.PI0_FAST)],
+    #             outputs=[
+    #                 _transforms.AbsoluteActions(_transforms.make_bool_mask(7, -1)),
+    #                 droid_policy.DroidOutputs(),
+    #             ],
+    #         ),
+    #         base_config=DataConfig(
+    #             prompt_from_task=True,
+    #         ),
+    #         model_transforms=ModelTransformFactory(
+    #             fast_model_tokenizer=_tokenizer.BinningTokenizer,
+    #         ),
+    #     ),
+    # ),
+
+    TrainConfig(
+        name="pi0_droid_jointpos_fullfinetune",
+        model=pi0.Pi0Config(
+            # action_dim=8, # leave as 32 default...
+            action_horizon=10,
+        ),
+        data=RLDSDroidDataConfig(
+            repo_id="BLANK",
+            assets=AssetsConfig(
+                assets_dir="gs://openpi-assets-simeval/pi0_droid_jointpos/assets",
+                asset_id="droid",
+            ),
+            datasets=[
+                ("droid_sim_dataset", 0.1),
+                ("droid", 0.9),
+            ],
+            rlds_data_dir="/mnt/bigguy",
+            action_space=droid_rlds_dataset.DroidActionSpace.JOINT_POSITION,
+        ),
+        weight_loader=weight_loaders.CheckpointWeightLoader("gs://openpi-assets-simeval/pi0_droid_jointpos/params"),
+        lr_schedule=_optimizer.CosineDecaySchedule(
+            warmup_steps=1_000,
+            peak_lr=5e-5,
+            decay_steps=1_000_000,
+            decay_lr=5e-5,
+        ),
+        num_train_steps=10_000,
+        batch_size=128,
+        log_interval=100,
+        save_interval=5000,
+        keep_period=5_000,
+        num_workers=0,  # Important: RLDS DataLoader requires num_workers=0, handles multi-processing internally
+    ),
+
     
     TrainConfig(
         name="pi0_fast_droid_jointpos_fullfinetune",
