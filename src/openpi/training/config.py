@@ -690,7 +690,6 @@ _CONFIGS = [
             ),
         ),
     ),
-
     #
     # Fine-tuning DROID configs.
     #
