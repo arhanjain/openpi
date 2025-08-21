@@ -30,6 +30,7 @@ def _parse_image(image) -> np.ndarray:
 @dataclasses.dataclass(frozen=True)
 class DroidInputs(transforms.DataTransformFn):
     # Determines which model will be used.
+    action_dim: int
     model_type: _model.ModelType
 
     def __call__(self, data: dict) -> dict:
