@@ -180,7 +180,6 @@ class BinningTokenizer:
         prefix_tokens = self._paligemma_tokenizer.encode(prefix, add_bos=True)
 
         if actions is not None:
-            # raise NotImplementedError("BinningTokenizer does not support encoding actions atm (only for inference use)")
             discretized_actions = np.digitize(actions, bins=np.linspace(-1, 1, 256 + 1)[:-1]) - 1
             paligemma_actions = self._act_tokens_to_paligemma_tokens(discretized_actions).flatten()
             postfix_tokens = self._paligemma_tokenizer.encode("Action: ") + paligemma_actions.tolist() + [self._paligemma_tokenizer.eos_id()]
