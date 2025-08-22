@@ -19,18 +19,10 @@ class PaligemmaTokenizer:
         with path.open("rb") as f:
             self._tokenizer = sentencepiece.SentencePieceProcessor(model_proto=f.read())
 
-    def tokenize(self, prompt: str, state: np.ndarray | None = None) -> tuple[np.ndarray, np.ndarray]:
+    def tokenize(self, prompt: str) -> tuple[np.ndarray, np.ndarray]:
         cleaned_text = prompt.strip().replace("_", " ").replace("\n", " ")
-        if state is not None:
-            # This is the Pi05 format, where the state is part of the discrete language input.
-            discretized_state = np.digitize(state, bins=np.linspace(-1, 1, 256 + 1)[:-1]) - 1
-            state_str = " ".join(map(str, discretized_state))
-            full_prompt = f"Task: {cleaned_text}, State: {state_str};\nAction: "
-            tokens = self._tokenizer.encode(full_prompt, add_bos=True)
-        else:
-            # This is the Pi0 format, where the state is part of the continuous action expert input.
-            # tokenize "\n" separately as the "start of answer" token
-            tokens = self._tokenizer.encode(cleaned_text, add_bos=True) + self._tokenizer.encode("\n")
+        # tokenize "\n" separately as the "start of answer" token
+        tokens = self._tokenizer.encode(cleaned_text, add_bos=True) + self._tokenizer.encode("\n")
         tokens_len = len(tokens)
         if tokens_len < self._max_len:
             padding = [False] * (self._max_len - tokens_len)
@@ -188,12 +180,8 @@ class BinningTokenizer:
         prefix_tokens = self._paligemma_tokenizer.encode(prefix, add_bos=True)
 
         if actions is not None:
-            # raise NotImplementedError("BinningTokenizer does not support encoding actions atm (only for inference use)")
-            discretized_actions = np.digitize(actions, bins=np.linspace(-1, 1, 256 + 1)[:-1]) - 1
-            paligemma_actions = self._act_tokens_to_paligemma_tokens(discretized_actions).flatten()
-            postfix_tokens = self._paligemma_tokenizer.encode("Action: ") + paligemma_actions.tolist() + [self._paligemma_tokenizer.eos_id()]
-        else:
-            postfix_tokens = []
+            raise NotImplementedError("BinningTokenizer does not support encoding actions atm (only for inference use)")
+        postfix_tokens = []
 
         # Create output token sequence & masks
         # AR mask is 0 on prefix (bidirectional attention) and 1 on postfix (causal attention to all previous tokens)
