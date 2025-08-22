@@ -182,7 +182,11 @@ class BinningTokenizer:
         if actions is not None:
             discretized_actions = np.digitize(actions, bins=np.linspace(-1, 1, 256 + 1)[:-1]) - 1
             paligemma_actions = self._act_tokens_to_paligemma_tokens(discretized_actions).flatten()
-            postfix_tokens = self._paligemma_tokenizer.encode("Action: ") + paligemma_actions.tolist() + [self._paligemma_tokenizer.eos_id()]
+            postfix_tokens = (
+                self._paligemma_tokenizer.encode("Action: ")
+                + paligemma_actions.tolist()
+                + [self._paligemma_tokenizer.eos_id()]
+            )
         else:
             postfix_tokens = []
 
