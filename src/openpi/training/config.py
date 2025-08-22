@@ -911,7 +911,7 @@ _CONFIGS = [
         model=pi0_fast.Pi0FASTConfig(
             action_dim=8, 
             action_horizon=15, 
-            max_token_len=550,
+            max_token_len=600,
             fast_model_tokenizer=_tokenizer.BinningTokenizer,
         ),
         data=RLDSDroidDataConfig(
@@ -935,11 +935,11 @@ _CONFIGS = [
             decay_steps=1_000_000,
             decay_lr=5e-5,
         ),
-        num_train_steps=10_000,
-        batch_size=128,
+        num_train_steps=5_000,
+        batch_size=64,
         log_interval=100,
-        save_interval=5000,
-        keep_period=5_000,
+        save_interval=500,
+        keep_period=500,
         num_workers=0,  # Important: RLDS DataLoader requires num_workers=0, handles multi-processing internally
     ),
 
