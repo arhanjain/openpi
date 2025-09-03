@@ -92,6 +92,8 @@ class DataConfig:
     datasets: List[Tuple[str, float]] | None = None
     # Action space for DROID dataset.
     action_space: droid_rlds_dataset.DroidActionSpace | None = None
+    # Path to the data filter file for DROID dataset
+    filter_dict_path: str | None = None
 
 
 class GroupFactory(Protocol):
@@ -361,6 +363,12 @@ class RLDSDroidDataConfig(DataConfigFactory):
     datasets: List[Tuple[str, float]] | None = None
     action_space: droid_rlds_dataset.DroidActionSpace | None = None
 
+    # Filtering options. Can pass a path to a dictionary that maps episodes to timestep ranges
+    # to tuples denoting ranges of time steps to keep (start, end). Episodes are uniquely identified with
+    # f"{recording_folderpath}--{file_path}", both of which are present in the RLDS episode metadata.
+    # Path to the filter dictionary file.
+    filter_dict_path: str | None = "gs://openpi-assets/droid/droid_sample_ranges_v1_0_1.json"
+
     @override
     def create(self, assets_dirs: pathlib.Path, model_config: _model.BaseModelConfig) -> DataConfig:
         repack_transform = _transforms.Group(
@@ -403,6 +411,7 @@ class RLDSDroidDataConfig(DataConfigFactory):
             rlds_data_dir=self.rlds_data_dir,
             datasets=self.datasets,
             action_space=self.action_space,
+            filter_dict_path=self.filter_dict_path,
         )
 
 
