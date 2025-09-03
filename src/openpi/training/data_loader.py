@@ -166,7 +166,8 @@ def create_rlds_dataset(
             shuffle=shuffle,
             action_chunk_size=action_horizon,
             action_space=data_config.action_space,
-            datasets=data_config.datasets
+            datasets=data_config.datasets,
+            filter_dict_path=data_config.filter_dict_path,
         )
     return DroidRldsDataset(
         data_dir=data_config.rlds_data_dir,

@@ -894,7 +894,7 @@ _CONFIGS = [
                 asset_id="droid",
             ),
             datasets=[
-                ("droid_sim_dataset", 0.1),
+                ("droid_sim_cotrain_set_dataset", 0.1),
                 ("droid", 0.9),
             ],
             rlds_data_dir="/mnt/bigguy",
@@ -911,7 +911,7 @@ _CONFIGS = [
         batch_size=128,
         log_interval=100,
         save_interval=500,
-        keep_period=500,
+        keep_period=1000,
         num_workers=0,  # Important: RLDS DataLoader requires num_workers=0, handles multi-processing internally
     ),
 
@@ -930,7 +930,7 @@ _CONFIGS = [
                 asset_id="droid",
             ),
             datasets=[
-                ("droid_sim_dataset", 0.1),
+                ("droid_sim_cotrain_set_dataset", 0.1),
                 ("droid", 0.9),
             ],
             rlds_data_dir="/mnt/bigguy",
@@ -948,7 +948,7 @@ _CONFIGS = [
         batch_size=64,
         log_interval=100,
         save_interval=500,
-        keep_period=500,
+        keep_period=1000,
         num_workers=0,  # Important: RLDS DataLoader requires num_workers=0, handles multi-processing internally
     ),
 
@@ -966,7 +966,7 @@ _CONFIGS = [
                 asset_id="droid",
             ),
             datasets=[
-                ("droid_sim_dataset", 0.1),
+                ("droid_sim_cotrain_set_dataset", 0.1),
                 ("droid", 1.0),
             ],
             rlds_data_dir="/mnt/bigguy",
@@ -983,7 +983,7 @@ _CONFIGS = [
         batch_size=128,
         log_interval=100,
         save_interval=500,
-        keep_period=500,
+        keep_period=1000,
         num_workers=0,  # Important: RLDS DataLoader requires num_workers=0, handles multi-processing internally
     ),
 
@@ -1002,7 +1002,7 @@ _CONFIGS = [
                 asset_id="droid",
             ),
             datasets=[
-                ("droid_sim_dataset", 0.1),
+                ("droid_sim_cotrain_set_dataset", 0.1),
                 ("droid", 0.9),
             ],
             rlds_data_dir="/mnt/bigguy",
@@ -1019,7 +1019,7 @@ _CONFIGS = [
         batch_size=128,
         log_interval=100,
         save_interval=500,
-        keep_period=500,
+        keep_period=1000,
         num_workers=0,  # Important: RLDS DataLoader requires num_workers=0, handles multi-processing internally
     ),
 
