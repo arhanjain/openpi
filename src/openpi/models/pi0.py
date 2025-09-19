@@ -1,4 +1,3 @@
-import dataclasses
 import logging
 
 import einops
@@ -9,10 +8,10 @@ import jax.numpy as jnp
 from typing_extensions import override
 
 from openpi.models import model as _model
+from openpi.models import pi0_config
 import openpi.models.gemma as _gemma
 import openpi.models.siglip as _siglip
 from openpi.shared import array_typing as at
-import openpi.shared.nnx_utils as nnx_utils
 
 logger = logging.getLogger("openpi")
 
@@ -64,6 +63,7 @@ def posemb_sincos(
     return jnp.concatenate([jnp.sin(sinusoid_input), jnp.cos(sinusoid_input)], axis=-1)
 
 
+<<<<<<< HEAD
 @dataclasses.dataclass(frozen=True)
 class Pi0Config(_model.BaseModelConfig):
     dtype: str = "bfloat16"
@@ -155,8 +155,10 @@ class Pi0Config(_model.BaseModelConfig):
         return nnx.All(*filters)
 
 
+=======
+>>>>>>> upstream/main
 class Pi0(_model.BaseModel):
-    def __init__(self, config: Pi0Config, rngs: nnx.Rngs):
+    def __init__(self, config: pi0_config.Pi0Config, rngs: nnx.Rngs):
         super().__init__(config.action_dim, config.action_horizon, config.max_token_len)
         self.pi05 = config.pi05
         paligemma_config = _gemma.get_config(config.paligemma_variant)
@@ -312,14 +314,19 @@ class Pi0(_model.BaseModel):
         observation: _model.Observation,
         *,
         num_steps: int | at.Int[at.Array, ""] = 10,
+<<<<<<< HEAD
         **kwargs,  # for compatibility with pi0_fast
+=======
+        noise: at.Float[at.Array, "b ah ad"] | None = None,
+>>>>>>> upstream/main
     ) -> _model.Actions:
         observation = _model.preprocess_observation(None, observation, train=False)
         # note that we use the convention more common in diffusion literature, where t=1 is noise and t=0 is the target
         # distribution. yes, this is the opposite of the pi0 paper, and I'm sorry.
         dt = -1.0 / num_steps
         batch_size = observation.state.shape[0]
-        noise = jax.random.normal(rng, (batch_size, self.action_horizon, self.action_dim))
+        if noise is None:
+            noise = jax.random.normal(rng, (batch_size, self.action_horizon, self.action_dim))
 
         # first fill KV cache with a forward pass of the prefix
         prefix_tokens, prefix_mask, prefix_ar_mask = self.embed_prefix(observation)
