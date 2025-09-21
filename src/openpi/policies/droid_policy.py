@@ -30,10 +30,6 @@ def _parse_image(image) -> np.ndarray:
 @dataclasses.dataclass(frozen=True)
 class DroidInputs(transforms.DataTransformFn):
     # Determines which model will be used.
-<<<<<<< HEAD
-    action_dim: int
-=======
->>>>>>> upstream/main
     model_type: _model.ModelType
 
     def __call__(self, data: dict) -> dict:
@@ -68,8 +64,7 @@ class DroidInputs(transforms.DataTransformFn):
         }
 
         if "actions" in data:
-            actions= np.asarray(data["actions"])
-            inputs["actions"] = transforms.pad_to_dim(actions, self.action_dim)
+            inputs["actions"] = np.asarray(data["actions"])
 
         if "prompt" in data:
             if isinstance(data["prompt"], bytes):

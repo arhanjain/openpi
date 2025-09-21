@@ -4,13 +4,14 @@ import dataclasses
 import difflib
 import logging
 import pathlib
-from typing import Any, Literal, Protocol, TypeAlias
+from typing import Any, Literal, Protocol, TypeAlias, List, Tuple
 
 import etils.epath as epath
 import flax.nnx as nnx
 from typing_extensions import override
 import tyro
 
+import openpi.shared.nnx_utils as nnx_utils
 import openpi.models.model as _model
 import openpi.models.pi0_config as pi0_config
 import openpi.models.pi0_fast as pi0_fast
@@ -490,7 +491,7 @@ class TrainConfig:
     # Base directory for config assets (e.g., norm stats).
     assets_base_dir: str = "./assets"
     # Base directory for checkpoints.
-    checkpoint_base_dir: str = "/mnt/bigguy/openpi-checkpoints"
+    checkpoint_base_dir: str = "./checkpoints"
 
     # Random seed that will be used by random generators during training.
     seed: int = 42
@@ -508,6 +509,8 @@ class TrainConfig:
     save_interval: int = 1000
     # If set, any existing checkpoints matching step % keep_period == 0 will not be deleted.
     keep_period: int | None = 5000
+    # If true, will save the train state to the checkpoint directory.
+    save_train_state: bool = True
 
     # If true, will overwrite the checkpoint directory if it already exists.
     overwrite: bool = False
@@ -564,14 +567,6 @@ _CONFIGS = [
     TrainConfig(
         name="pi05_aloha",
         model=pi0_config.Pi0Config(pi05=True),
-        data=LeRobotAlohaDataConfig(
-            assets=AssetsConfig(asset_id="trossen"),
-        ),
-        policy_metadata={"reset_pose": [0, -1.5, 1.5, 0, 0, 0]},
-    ),
-    TrainConfig(
-        name="pi05_aloha",
-        model=pi0.Pi0Config(pi05=True),
         data=LeRobotAlohaDataConfig(
             assets=AssetsConfig(asset_id="trossen"),
         ),
@@ -641,22 +636,8 @@ _CONFIGS = [
         ),
     ),
     TrainConfig(
-        name="pi05_droid",
-        model=pi0.Pi0Config(action_horizon=15, pi05=True),
-        data=SimpleDataConfig(
-            assets=AssetsConfig(asset_id="droid"),
-            data_transforms=lambda model: _transforms.Group(
-                inputs=[droid_policy.DroidInputs(model_type=ModelType.PI05)],
-                outputs=[droid_policy.DroidOutputs()],
-            ),
-            base_config=DataConfig(
-                prompt_from_task=True,
-            ),
-        ),
-    ),
-    TrainConfig(
         name="pi05_droid_jointpos",
-        model=pi0.Pi0Config(action_horizon=15, pi05=True),
+        model=pi0_config.Pi0Config(action_horizon=15, pi05=True),
         data=SimpleDataConfig(
             assets=AssetsConfig(asset_id="droid"),
             data_transforms=lambda model: _transforms.Group(
@@ -879,6 +860,39 @@ _CONFIGS = [
         ),
     ),
 
+    ### START ENCODER FINETUNE CONFIGS ###
+    TrainConfig(
+        name="pi05_droid_jointpos_encoderfinetune",
+        model=pi0_config.Pi0Config(action_horizon=15, pi05=True),
+        data=RLDSDroidDataConfig(
+            repo_id="BLANK",
+            assets=AssetsConfig(
+                assets_dir="gs://openpi-assets-simeval/pi05_droid_jointpos/assets",
+                asset_id="droid",
+            ),
+            datasets=[
+                ("droid_sim_cotrain_set_dataset", 0.1),
+                ("droid", 0.9),
+            ],
+            rlds_data_dir="/mnt/bigguy",
+            action_space=droid_rlds_dataset.DroidActionSpace.JOINT_POSITION,
+        ),
+        weight_loader=weight_loaders.CheckpointWeightLoader("gs://openpi-assets-simeval/pi05_droid_jointpos/params"),
+        freeze_filter=nnx_utils.PathRegex(".*llm.*"),
+        lr_schedule=_optimizer.CosineDecaySchedule(
+            warmup_steps=1_000,
+            peak_lr=5e-5,
+            decay_steps=1_000_000,
+            decay_lr=5e-5,
+        ),
+        num_train_steps=5_000,
+        batch_size=128,
+        log_interval=100,
+        save_interval=500,
+        keep_period=1000,
+        num_workers=0,  # Important: RLDS DataLoader requires num_workers=0, handles multi-processing internally
+    ),
+
     TrainConfig(
         name="pi0_fast_droid_jointpos_encoderfinetune",
         model=pi0_fast.Pi0FASTConfig(
@@ -891,10 +905,8 @@ _CONFIGS = [
             rlds_data_dir="/mnt/bigguy",
             action_space=droid_rlds_dataset.DroidActionSpace.JOINT_POSITION,
         ),
-        weight_loader=weight_loaders.CheckpointWeightLoader("s3://openpi-assets-simeval/pi0_fast_droid_jointpos/params"),
-        freeze_filter=pi0_fast.Pi0FASTConfig(
-              action_dim=8, action_horizon=10, max_token_len=180, paligemma_variant="gemma_2b"
-              ).get_freeze_filter(mode="encoder"),
+        weight_loader=weight_loaders.CheckpointWeightLoader("gs://openpi-assets-simeval/pi0_fast_droid_jointpos/params"),
+        freeze_filter=nnx_utils.PathRegex(".*llm.*"),
         lr_schedule=_optimizer.CosineDecaySchedule(
             warmup_steps=1_000,
             peak_lr=5e-5,
@@ -910,8 +922,87 @@ _CONFIGS = [
     ),
 
     TrainConfig(
+        name="pi0_droid_jointpos_encoderfinetune",
+        model=pi0_config.Pi0Config(
+            # action_dim=8, # leave as 32 default...
+            action_horizon=15,
+            max_token_len=100,
+        ),
+        data=RLDSDroidDataConfig(
+            repo_id="BLANK",
+            assets=AssetsConfig(
+                assets_dir="gs://openpi-assets-simeval/pi0_droid_jointpos/assets",
+                asset_id="droid",
+            ),
+            datasets=[
+                ("droid_sim_cotrain_set_dataset", 0.05),
+                ("droid_sim_in_dist_dataset", 0.05),
+                ("droid", 1.0),
+            ],
+            rlds_data_dir="/mnt/bigguy",
+            action_space=droid_rlds_dataset.DroidActionSpace.JOINT_POSITION,
+        ),
+        weight_loader=weight_loaders.CheckpointWeightLoader("gs://openpi-assets-simeval/pi0_droid_jointpos/params"),
+        lr_schedule=_optimizer.CosineDecaySchedule(
+            warmup_steps=1_000,
+            peak_lr=5e-5,
+            decay_steps=1_000_000,
+            decay_lr=5e-5,
+        ),
+        num_train_steps=5_000,
+        batch_size=128,
+        log_interval=100,
+        save_interval=500,
+        keep_period=1000,
+        num_workers=0,  # Important: RLDS DataLoader requires num_workers=0, handles multi-processing internally
+    ),
+
+    TrainConfig(
+        name="paligemma_binning_droid_jointpos_encoderfinetune",
+        model=pi0_fast.Pi0FASTConfig(
+            action_dim=8, 
+            action_horizon=15, 
+            max_token_len=600,
+            fast_model_tokenizer=_tokenizer.BinningTokenizer,
+        ),
+        data=RLDSDroidDataConfig(
+            repo_id="BLANK",
+            assets=AssetsConfig(
+                assets_dir="gs://openpi-assets-simeval/paligemma_binning_droid_jointpos/assets",
+                asset_id="droid",
+            ),
+            datasets=[
+                ("droid_sim_cotrain_set_dataset", 0.05),
+                ("droid_sim_in_dist_dataset", 0.05),
+                ("droid", 0.9),
+            ],
+            rlds_data_dir="/mnt/bigguy",
+            action_space=droid_rlds_dataset.DroidActionSpace.JOINT_POSITION,
+            
+        ),
+        weight_loader=weight_loaders.CheckpointWeightLoader("gs://openpi-assets-simeval/paligemma_binning_droid_jointpos/params"),
+        freeze_filter=nnx_utils.PathRegex(".*llm.*"),
+        lr_schedule=_optimizer.CosineDecaySchedule(
+            warmup_steps=1_000,
+            peak_lr=5e-5,
+            decay_steps=1_000_000,
+            decay_lr=5e-5,
+        ),
+        num_train_steps=5_000,
+        batch_size=64,
+        log_interval=100,
+        save_interval=500,
+        keep_period=1000,
+        num_workers=0,  # Important: RLDS DataLoader requires num_workers=0, handles multi-processing internally
+    ),
+
+    ### END ENCODER FINETUNE CONFIGS ###
+
+    ### START FULL FINETUNE CONFIGS ###
+
+    TrainConfig(
         name="pi05_droid_jointpos_fullfinetune",
-        model=pi0.Pi0Config(action_horizon=15, pi05=True),
+        model=pi0_config.Pi0Config(action_horizon=15, pi05=True),
         data=RLDSDroidDataConfig(
             repo_id="BLANK",
             assets=AssetsConfig(
@@ -919,7 +1010,8 @@ _CONFIGS = [
                 asset_id="droid",
             ),
             datasets=[
-                ("droid_sim_cotrain_set_dataset", 0.1),
+                ("droid_sim_cotrain_set_dataset", 0.05),
+                ("droid_sim_in_dist_dataset", 0.05),
                 ("droid", 0.9),
             ],
             rlds_data_dir="/mnt/bigguy",
@@ -955,7 +1047,8 @@ _CONFIGS = [
                 asset_id="droid",
             ),
             datasets=[
-                ("droid_sim_cotrain_set_dataset", 0.1),
+                ("droid_sim_cotrain_set_dataset", 0.05),
+                ("droid_sim_in_dist_dataset", 0.05),
                 ("droid", 0.9),
             ],
             rlds_data_dir="/mnt/bigguy",
@@ -979,7 +1072,7 @@ _CONFIGS = [
 
     TrainConfig(
         name="pi0_droid_jointpos_fullfinetune",
-        model=pi0.Pi0Config(
+        model=pi0_config.Pi0Config(
             # action_dim=8, # leave as 32 default...
             action_horizon=10,
             max_token_len=100,
@@ -991,8 +1084,9 @@ _CONFIGS = [
                 asset_id="droid",
             ),
             datasets=[
-                ("droid_sim_cotrain_set_dataset", 0.1),
-                ("droid", 1.0),
+                ("droid_sim_cotrain_set_dataset", 0.05),
+                ("droid_sim_in_dist_dataset", 0.05),
+                ("droid", 0.9),
             ],
             rlds_data_dir="/mnt/bigguy",
             action_space=droid_rlds_dataset.DroidActionSpace.JOINT_POSITION,
@@ -1027,7 +1121,8 @@ _CONFIGS = [
                 asset_id="droid",
             ),
             datasets=[
-                ("droid_sim_cotrain_set_dataset", 0.1),
+                ("droid_sim_cotrain_set_dataset", 0.05),
+                ("droid_sim_in_dist_dataset", 0.05),
                 ("droid", 0.9),
             ],
             rlds_data_dir="/mnt/bigguy",
@@ -1047,6 +1142,8 @@ _CONFIGS = [
         keep_period=1000,
         num_workers=0,  # Important: RLDS DataLoader requires num_workers=0, handles multi-processing internally
     ),
+
+    ### END FULL FINETUNE CONFIGS ###
 
     TrainConfig(
         # This config is for fine-tuning pi0-FAST-base on the *full* DROID dataset.
@@ -1158,6 +1255,12 @@ _CONFIGS = [
 ]
 
 if len({config.name for config in _CONFIGS}) != len(_CONFIGS):
+    names = {}
+    for config in _CONFIGS:
+        if config.name in names:
+            print(f"Config {config.name} already exists.")
+        names[config.name] = config
+
     raise ValueError("Config names must be unique.")
 _CONFIGS_DICT = {config.name: config for config in _CONFIGS}
 

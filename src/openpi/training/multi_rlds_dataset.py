@@ -48,7 +48,7 @@ class MultiRldsDataset(DroidRldsDataset):
         # Configure Tensorflow with *no GPU devices* (to prevent clobber with PyTorch / JAX)
         tf.config.set_visible_devices([], "GPU")
 
-        assert(sum([weight for ds_name, weight in datasets]) == 1.0, "Dataset weights must add up to 1.0")
+        assert sum([weight for ds_name, weight in datasets]) == 1.0, "Dataset weights must add up to 1.0"
 
         def prepare_dataset_og(ds_name):
             builder = tfds.builder(ds_name, data_dir=data_dir)
