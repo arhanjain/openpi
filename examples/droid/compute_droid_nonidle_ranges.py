@@ -26,12 +26,18 @@ os.environ["CUDA_VISIBLE_DEVICES"] = ""  # Set to the GPU you want to use, or le
 
 builder = tfds.builder_from_directory(
     # path to the `droid` directory (not its parent)
-    builder_dir="<path_to_droid_dataset_tfds_files>",
+    # builder_dir="/gscratch/scrubbed/arhanj/datasets/droid_in_domain_dataset/1.0.0",
+    # builder_dir="/gscratch/scrubbed/arhanj/datasets/droid_near_domain_dataset/1.0.1",
+    builder_dir="/gscratch/scrubbed/arhanj/datasets/droid_ood_cotrain_dataset/2.0.0",
+    # builder_dir="/gscratch/weirdlab/arhan/datasets/droid/1.0.1",
 )
 ds = builder.as_dataset(split="train", shuffle_files=False)
 tf.data.experimental.ignore_errors(ds)
 
-keep_ranges_path = "<path_to_where_to_save_the_json>"
+# keep_ranges_path = "/gscratch/scrubbed/arhanj/datasets/droid_in_domain_dataset/1.0.0/nonidle_ranges.json"
+# keep_ranges_path = "/gscratch/scrubbed/arhanj/datasets/droid_near_domain_dataset/1.0.1/nonidle_ranges.json"
+keep_ranges_path = "/gscratch/scrubbed/arhanj/datasets/droid_ood_cotrain_dataset/2.0.0/nonidle_ranges.json"
+# keep_ranges_path = "/gscratch/weirdlab/arhan/datasets/droid/1.0.1/nonidle_ranges-jp-deltas.json"
 
 min_idle_len = 7  # If more than this number of consecutive idle frames, filter all of them out
 min_non_idle_len = 16  # If fewer than this number of consecutive non-idle frames, filter all of them out
@@ -51,12 +57,18 @@ for ep_idx, ep in enumerate(tqdm(ds)):
     if key in keep_ranges_map:
         continue
 
-    joint_velocities = [step["action_dict"]["joint_velocity"].numpy() for step in ep["steps"]]
-    joint_velocities = np.array(joint_velocities)
 
+    joint_positions = [np.concatenate([step["action_dict"]["joint_position"].numpy(), step["action_dict"]["gripper_position"].numpy()]) for step in ep["steps"]]
+    joint_positions = np.array(joint_positions)
     is_idle_array = np.hstack(
-        [np.array([False]), np.all(np.abs(joint_velocities[1:] - joint_velocities[:-1]) < 1e-3, axis=1)]
-    )
+        [np.array([False]), np.all(np.abs(joint_positions[1:] - joint_positions[:-1]) < 1e-3, axis=1)]
+    ) if len(joint_positions) > 0 else np.array([False])
+
+    # joint_velocities = [step["action_dict"]["joint_velocity"].numpy() for step in ep["steps"]]
+    # joint_velocities = np.array(joint_velocities)
+    # is_idle_array = np.hstack(
+    #     [np.array([False]), np.all(np.abs(joint_velocities[1:] - joint_velocities[:-1]) < 1e-3, axis=1)]
+    # )
 
     # Find what steps go from idle to non-idle and vice-versa
     is_idle_padded = np.concatenate(
@@ -72,7 +84,8 @@ for ep_idx, ep in enumerate(tqdm(ds)):
     is_idle_true_starts = is_idle_true_starts[true_segment_masks]
     is_idle_true_ends = is_idle_true_ends[true_segment_masks]
 
-    keep_mask = np.ones(len(joint_velocities), dtype=bool)
+    # keep_mask = np.ones(len(joint_velocities), dtype=bool)
+    keep_mask = np.ones(len(joint_positions), dtype=bool)
     for start, end in zip(is_idle_true_starts, is_idle_true_ends, strict=True):
         keep_mask[start:end] = False
 
@@ -92,7 +105,10 @@ for ep_idx, ep in enumerate(tqdm(ds)):
     # Add mapping from episode unique ID key to list of non-idle ranges to keep
     keep_ranges_map[key] = []
     for start, end in zip(keep_true_starts, keep_true_ends, strict=True):
-        keep_ranges_map[key].append((int(start), int(end) - filter_last_n_in_ranges))
+        if int(end) == len(joint_positions):
+            keep_ranges_map[key].append((int(start), int(end))) # dont filter the last n frames if the end of episode, you might delete useful data
+        else:
+            keep_ranges_map[key].append((int(start), int(end) - filter_last_n_in_ranges))
 
     if ep_idx % 1000 == 0:
         with Path(keep_ranges_path).open("w") as f:
