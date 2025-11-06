@@ -17,6 +17,31 @@ import openpi.training.data_loader as _data_loader
 import openpi.training.utils as training_utils
 
 
+class DualCheckpointManager:
+    def __init__(self, mngs: dict[str, ocp.CheckpointManager]):
+        self.mng_assignments = mngs
+        self.mngs = set(mngs.values())
+
+    def wait_until_finished(self):
+        for mng in self.mngs:
+            mng.wait_until_finished()
+
+    def save(self, step: int, items: dict):
+        for mng in self.mngs:
+            items_single = {k: v for k, v in items.items() if self.mng_assignments[k] == mng}
+            mng.save(step, items_single)
+    
+    def restore(self, step: int, items: dict):
+        restored = {}
+        for mng in self.mngs:
+            items = {k: v for k, v in items.items() if self.mng_assignments[k] == mng}
+            restored_single = mng.restore(step, items)
+            restored.update(restored_single)
+        return restored
+
+    def all_steps(self, read: bool = False):
+        return set(step for mng in self.mngs for step in mng.all_steps(read))
+
 def initialize_checkpoint_dir(
     checkpoint_dir: epath.Path | str, *, keep_period: int | None, overwrite: bool, resume: bool
 ) -> tuple[ocp.CheckpointManager, bool]:
@@ -37,19 +62,42 @@ def initialize_checkpoint_dir(
 
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
 
-    mngr = ocp.CheckpointManager(
+    mngr1 = ocp.CheckpointManager(
         checkpoint_dir,
         item_handlers={
             "assets": CallbackHandler(),
-            "train_state": ocp.PyTreeCheckpointHandler(),
             "params": ocp.PyTreeCheckpointHandler(),
         },
         options=ocp.CheckpointManagerOptions(
-            max_to_keep=1,
+            max_to_keep=None,
             keep_period=keep_period,
             create=False,
             async_options=ocp.AsyncOptions(timeout_secs=7200),
         ),
+    )
+
+    # Only keeps latest train state checkpoint.
+    train_states_dir = checkpoint_dir / "train_states"
+    train_states_dir.mkdir(parents=True, exist_ok=True)
+    mngr2 = ocp.CheckpointManager(
+        train_states_dir,
+        item_handlers={
+            "train_state": ocp.PyTreeCheckpointHandler(),
+        },
+        options=ocp.CheckpointManagerOptions(
+            max_to_keep=1,
+            keep_period=None,
+            create=False,
+            async_options=ocp.AsyncOptions(timeout_secs=7200),
+        ),
+    )
+
+    mngr = DualCheckpointManager(
+        {
+            "assets": mngr1,
+            "params": mngr1,
+            "train_state": mngr2,
+        }
     )
 
     # Special case: the checkpoint directory exists and the user requests to resume training, but the training run did
