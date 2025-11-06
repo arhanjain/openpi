@@ -26,7 +26,7 @@ os.environ["CUDA_VISIBLE_DEVICES"] = ""  # Set to the GPU you want to use, or le
 
 builder = tfds.builder_from_directory(
     # path to the `droid` directory (not its parent)
-    builder_dir="<path_to_droid_dataset_tfds_files>",
+    # builder_dir="<path_to_droid_dataset_tfds_files>"
 )
 ds = builder.as_dataset(split="train", shuffle_files=False)
 tf.data.experimental.ignore_errors(ds)

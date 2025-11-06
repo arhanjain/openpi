@@ -489,9 +489,9 @@ class TrainConfig:
     data: DataConfigFactory = dataclasses.field(default_factory=FakeDataConfig)
 
     # Base directory for config assets (e.g., norm stats).
-    assets_base_dir: str = "./assets"
+    assets_base_dir: str = "/gpfs/scrubbed/arhanj/openpi/assets"
     # Base directory for checkpoints.
-    checkpoint_base_dir: str = "./checkpoints"
+    checkpoint_base_dir: str = "/gpfs/scrubbed/arhanj/openpi/checkpoints"
 
     # Random seed that will be used by random generators during training.
     seed: int = 42
@@ -511,6 +511,8 @@ class TrainConfig:
     keep_period: int | None = 5000
     # If true, will save the train state to the checkpoint directory.
     save_train_state: bool = True
+    # specific checkpoints to keep
+    specific_checkpoints_to_keep: List[int] | None = dataclasses.field(default_factory=lambda: [100, 200, 500])
 
     # If true, will overwrite the checkpoint directory if it already exists.
     overwrite: bool = False
@@ -998,8 +1000,39 @@ _CONFIGS = [
 
     ### END ENCODER FINETUNE CONFIGS ###
 
-    ### START FULL FINETUNE CONFIGS ###
+    TrainConfig(
+        name="pi05_droid_jointpos_fullfinetune_test",
+        model=pi0_config.Pi0Config(action_horizon=15, pi05=True),
+        data=RLDSDroidDataConfig(
+            repo_id="BLANK",
+            assets=AssetsConfig(
+                assets_dir="gs://openpi-assets-simeval/pi05_droid_jointpos/assets",
+                asset_id="droid",
+            ),
+            datasets=[
+                ("droid_near_domain_dataset:1.0.1", 1.0),
+                # ("droid", 0.9),
+            ],
+            rlds_data_dir="/gpfs/scrubbed/arhanj/datasets",
+            action_space=droid_rlds_dataset.DroidActionSpace.JOINT_POSITION,
+        ),
+        weight_loader=weight_loaders.CheckpointWeightLoader("gs://openpi-assets-simeval/pi05_droid_jointpos/params"),
+        lr_schedule=_optimizer.CosineDecaySchedule(
+            warmup_steps=1_000,
+            peak_lr=5e-5,
+            decay_steps=1_000_000,
+            decay_lr=5e-5,
+        ),
+        num_train_steps=10_000,
+        batch_size=128,
+        log_interval=100,
+        save_interval=20,
+        keep_period=40,
+        num_workers=0,  # Important: RLDS DataLoader requires num_workers=0, handles multi-processing internally
+    ),
 
+
+    ### START FULL FINETUNE CONFIGS ###
     TrainConfig(
         name="pi05_droid_jointpos_fullfinetune",
         model=pi0_config.Pi0Config(action_horizon=15, pi05=True),
@@ -1010,12 +1043,10 @@ _CONFIGS = [
                 asset_id="droid",
             ),
             datasets=[
-                # ("droid_sim_cotrain_set_dataset", 0.1),
-                # ("droid_sim_in_dist_dataset", 0.05),
-                ("droid_cotrain2_dataset", 0.1),
+                ("droid_near_domain_dataset", 0.1),
                 ("droid", 0.9),
             ],
-            rlds_data_dir="/mnt/bigguy",
+            rlds_data_dir="/gpfs/scrubbed/arhanj/datasets",
             action_space=droid_rlds_dataset.DroidActionSpace.JOINT_POSITION,
         ),
         weight_loader=weight_loaders.CheckpointWeightLoader("gs://openpi-assets-simeval/pi05_droid_jointpos/params"),
@@ -1025,10 +1056,10 @@ _CONFIGS = [
             decay_steps=1_000_000,
             decay_lr=5e-5,
         ),
-        num_train_steps=5_000,
+        num_train_steps=10_000,
         batch_size=128,
         log_interval=100,
-        save_interval=500,
+        save_interval=1000,
         keep_period=1000,
         num_workers=0,  # Important: RLDS DataLoader requires num_workers=0, handles multi-processing internally
     ),
@@ -1048,12 +1079,10 @@ _CONFIGS = [
                 asset_id="droid",
             ),
             datasets=[
-                # ("droid_sim_cotrain_set_dataset", 0.05),
-                # ("droid_sim_in_dist_dataset", 0.05),
-                ("droid_cotrain2_dataset", 0.1),
+                ("droid_near_domain_dataset", 0.1),
                 ("droid", 0.9),
             ],
-            rlds_data_dir="/mnt/bigguy",
+            rlds_data_dir="/gpfs/scrubbed/arhanj/datasets",
             action_space=droid_rlds_dataset.DroidActionSpace.JOINT_POSITION,
             
         ),
@@ -1064,10 +1093,10 @@ _CONFIGS = [
             decay_steps=1_000_000,
             decay_lr=5e-5,
         ),
-        num_train_steps=5_000,
+        num_train_steps=10_000,
         batch_size=64,
         log_interval=100,
-        save_interval=500,
+        save_interval=1000,
         keep_period=1000,
         num_workers=0,  # Important: RLDS DataLoader requires num_workers=0, handles multi-processing internally
     ),
@@ -1086,12 +1115,10 @@ _CONFIGS = [
                 asset_id="droid",
             ),
             datasets=[
-                # ("droid_sim_cotrain_set_dataset", 0.05),
-                # ("droid_sim_in_dist_dataset", 0.05),
-                ("droid_cotrain2_dataset", 0.1),
+                ("droid_near_domain_dataset", 0.1),
                 ("droid", 0.9),
             ],
-            rlds_data_dir="/mnt/bigguy",
+            rlds_data_dir="/gpfs/scrubbed/arhanj/datasets",
             action_space=droid_rlds_dataset.DroidActionSpace.JOINT_POSITION,
         ),
         weight_loader=weight_loaders.CheckpointWeightLoader("gs://openpi-assets-simeval/pi0_droid_jointpos/params"),
@@ -1101,10 +1128,45 @@ _CONFIGS = [
             decay_steps=1_000_000,
             decay_lr=5e-5,
         ),
-        num_train_steps=5_000,
+        num_train_steps=10_000,
         batch_size=128,
         log_interval=100,
-        save_interval=500,
+        save_interval=1000,
+        keep_period=1000,
+        num_workers=0,  # Important: RLDS DataLoader requires num_workers=0, handles multi-processing internally
+    ),
+
+    TrainConfig(
+        name="pi0_droid_jointpos_100k_fullfinetune",
+        model=pi0_config.Pi0Config(
+            # action_dim=8, # leave as 32 default...
+            action_horizon=10,
+            max_token_len=100,
+        ),
+        data=RLDSDroidDataConfig(
+            repo_id="BLANK",
+            assets=AssetsConfig(
+                assets_dir="gs://openpi-assets-simeval/pi0_droid_jointpos_100k/assets",
+                asset_id="droid",
+            ),
+            datasets=[
+                ("droid_near_domain_dataset", 0.1),
+                ("droid", 0.9),
+            ],
+            rlds_data_dir="/gpfs/scrubbed/arhanj/datasets",
+            action_space=droid_rlds_dataset.DroidActionSpace.JOINT_POSITION,
+        ),
+        weight_loader=weight_loaders.CheckpointWeightLoader("gs://openpi-assets-simeval/pi0_droid_jointpos_100k/params"),
+        lr_schedule=_optimizer.CosineDecaySchedule(
+            warmup_steps=1_000,
+            peak_lr=5e-5,
+            decay_steps=1_000_000,
+            decay_lr=5e-5,
+        ),
+        num_train_steps=10_000,
+        batch_size=128,
+        log_interval=100,
+        save_interval=1000,
         keep_period=1000,
         num_workers=0,  # Important: RLDS DataLoader requires num_workers=0, handles multi-processing internally
     ),
@@ -1124,12 +1186,10 @@ _CONFIGS = [
                 asset_id="droid",
             ),
             datasets=[
-                # ("droid_sim_cotrain_set_dataset", 0.05),
-                # ("droid_sim_in_dist_dataset", 0.05),
-                ("droid_cotrain2_dataset", 0.1),
+                ("droid_near_domain_dataset", 0.1),
                 ("droid", 0.9),
             ],
-            rlds_data_dir="/mnt/bigguy",
+            rlds_data_dir="/gpfs/scrubbed/arhanj/datasets",
             action_space=droid_rlds_dataset.DroidActionSpace.JOINT_POSITION,
         ),
         weight_loader=weight_loaders.CheckpointWeightLoader("gs://openpi-assets-simeval/pi0_fast_droid_jointpos/params"),
@@ -1139,10 +1199,10 @@ _CONFIGS = [
             decay_steps=1_000_000,
             decay_lr=5e-5,
         ),
-        num_train_steps=5_000,
+        num_train_steps=10_000,
         batch_size=128,
         log_interval=100,
-        save_interval=500,
+        save_interval=1000,
         keep_period=1000,
         num_workers=0,  # Important: RLDS DataLoader requires num_workers=0, handles multi-processing internally
     ),
