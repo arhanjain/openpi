@@ -22,6 +22,7 @@ import openpi.policies.libero_policy as libero_policy
 import openpi.shared.download as _download
 import openpi.shared.normalize as _normalize
 import openpi.training.droid_rlds_dataset as droid_rlds_dataset
+import openpi.training.libero_rlds_dataset as libero_rlds_dataset
 import openpi.training.misc.roboarena_config as roboarena_config
 import openpi.training.optimizer as _optimizer
 import openpi.training.weight_loaders as weight_loaders
@@ -95,6 +96,7 @@ class DataConfig:
     action_space: droid_rlds_dataset.DroidActionSpace | None = None
     # Path to the data filter file for DROID dataset
     filter_dict_path: str | None = None
+    dataset_class: type | None = None
 
 
 class GroupFactory(Protocol):
@@ -353,6 +355,46 @@ class LeRobotLiberoDataConfig(DataConfigFactory):
             model_transforms=model_transforms,
         )
 
+@dataclasses.dataclass(frozen=True)
+class RLDSLiberoDataConfig(DataConfigFactory):
+    rlds_data_dir: str | None = None
+    dataset_class = libero_rlds_dataset.LiberoRldsDataset
+    @override
+    def create(self, assets_dirs: pathlib.Path, model_config: _model.BaseModelConfig) -> DataConfig:
+        repack_transform = _transforms.Group(
+            inputs=[
+                _transforms.RepackTransform(
+                    {
+                        "observation/image": "observation/image",
+                        "observation/wrist_image": "observation/wrist_image",
+                        "observation/state": "observation/state",
+                        "actions": "actions",
+                        "prompt": "prompt",
+                    }
+                )
+            ]
+        )
+
+        data_transforms = _transforms.Group(
+            inputs=[libero_policy.LiberoInputs(model_type=model_config.model_type)],
+            outputs=[libero_policy.LiberoOutputs()],
+        )
+
+        # Model transforms include things like tokenizing the prompt and action targets
+        # You do not need to change anything here for your own dataset.
+        model_transforms = ModelTransformFactory()(model_config)
+
+        # We return all data transforms for training and inference. No need to change anything here.
+        assert self.rlds_data_dir is not None, "Need to set rlds data dir for RLDS data loader."
+        return dataclasses.replace(
+            self.create_base_config(assets_dirs, model_config),
+            repack_transforms=repack_transform,
+            data_transforms=data_transforms,
+            model_transforms=model_transforms,
+            rlds_data_dir=self.rlds_data_dir,
+            dataset_class=self.dataset_class,
+        )
+
 
 @dataclasses.dataclass(frozen=True)
 class RLDSDroidDataConfig(DataConfigFactory):
@@ -489,7 +531,7 @@ class TrainConfig:
     data: DataConfigFactory = dataclasses.field(default_factory=FakeDataConfig)
 
     # Base directory for config assets (e.g., norm stats).
-    assets_base_dir: str = "/gpfs/scrubbed/arhanj/openpi/assets"
+    assets_base_dir: str = "/gscratch/scrubbed/arhanj/openpi/assets"
     # Base directory for checkpoints.
     checkpoint_base_dir: str = "/gpfs/scrubbed/arhanj/openpi/checkpoints"
 
@@ -922,6 +964,7 @@ _CONFIGS = [
         keep_period=10_000,
         num_workers=0,  # Important: RLDS DataLoader requires num_workers=0, handles multi-processing internally
     ),
+    
 
     TrainConfig(
         name="pi0_droid_jointpos_encoderfinetune",
@@ -1208,6 +1251,168 @@ _CONFIGS = [
     ),
 
     ### END FULL FINETUNE CONFIGS ###
+
+    ### START LIBERO FULLFINETUNE CONFIGS ###
+    TrainConfig(
+        name="pi05_droid_libero_fullfinetune",
+        model=pi0_config.Pi0Config(action_horizon=15, pi05=True),
+        data=RLDSLiberoDataConfig(
+            repo_id="libero_90",
+            assets=AssetsConfig(
+                # TODO: recompute assets
+                # assets_dir="gs://openpi-assets-simeval/pi05_droid_jointpos/assets",
+                # asset_id="droid",
+            ),
+            # rlds_data_dir="/gpfs/scrubbed/arhanj/datasets",
+            rlds_data_dir="/gscratch/scrubbed/arhanj/datasets",
+        ),
+        weight_loader=weight_loaders.CheckpointWeightLoader("gs://openpi-assets-simeval/pi05_droid_jointpos/params"),
+        lr_schedule=_optimizer.CosineDecaySchedule(
+            warmup_steps=1_000,
+            peak_lr=5e-5,
+            decay_steps=1_000_000,
+            decay_lr=5e-5,
+        ),
+        num_train_steps=100_000,
+        batch_size=128,
+        log_interval=100,
+        save_interval=20_000,
+        keep_period=20_000,
+        num_workers=0,  # Important: RLDS DataLoader requires num_workers=0, handles multi-processing internally
+    ),
+
+    TrainConfig(
+        name="paligemma_binning_droid_libero_fullfinetune",
+        model=pi0_fast.Pi0FASTConfig(
+            action_dim=8, 
+            action_horizon=15, 
+            max_token_len=600,
+            fast_model_tokenizer=_tokenizer.BinningTokenizer,
+        ),
+        data=RLDSLiberoDataConfig(
+            repo_id="libero_90",
+            assets=AssetsConfig(
+                # TODO: recompute assets
+                # assets_dir="gs://openpi-assets-simeval/pi05_droid_jointpos/assets",
+                # asset_id="droid",
+            ),
+            # rlds_data_dir="/gpfs/scrubbed/arhanj/datasets",
+            rlds_data_dir="/gscratch/scrubbed/arhanj/datasets",
+        ),
+        weight_loader=weight_loaders.CheckpointWeightLoader("gs://openpi-assets-simeval/paligemma_binning_droid_jointpos/params"),
+        lr_schedule=_optimizer.CosineDecaySchedule(
+            warmup_steps=1_000,
+            peak_lr=5e-5,
+            decay_steps=1_000_000,
+            decay_lr=5e-5,
+        ),
+        num_train_steps=10_000,
+        batch_size=64,
+        log_interval=100,
+        save_interval=1000,
+        keep_period=1000,
+        num_workers=0,  # Important: RLDS DataLoader requires num_workers=0, handles multi-processing internally
+    ),
+
+    TrainConfig(
+        name="pi0_droid_libero_fullfinetune",
+        model=pi0_config.Pi0Config(
+            # action_dim=8, # leave as 32 default...
+            action_horizon=10,
+            max_token_len=100,
+        ),
+        data=RLDSLiberoDataConfig(
+            repo_id="libero_90",
+            assets=AssetsConfig(
+                # TODO: recompute assets
+                # assets_dir="gs://openpi-assets-simeval/pi05_droid_jointpos/assets",
+                # asset_id="droid",
+            ),
+            # rlds_data_dir="/gpfs/scrubbed/arhanj/datasets",
+            rlds_data_dir="/gscratch/scrubbed/arhanj/datasets",
+        ),
+        weight_loader=weight_loaders.CheckpointWeightLoader("gs://openpi-assets-simeval/pi0_droid_jointpos/params"),
+        lr_schedule=_optimizer.CosineDecaySchedule(
+            warmup_steps=1_000,
+            peak_lr=5e-5,
+            decay_steps=1_000_000,
+            decay_lr=5e-5,
+        ),
+        num_train_steps=10_000,
+        batch_size=128,
+        log_interval=100,
+        save_interval=1000,
+        keep_period=1000,
+        num_workers=0,  # Important: RLDS DataLoader requires num_workers=0, handles multi-processing internally
+    ),
+
+    TrainConfig(
+        name="pi0_droid_libero_100k_fullfinetune",
+        model=pi0_config.Pi0Config(
+            # action_dim=8, # leave as 32 default...
+            action_horizon=10,
+            max_token_len=100,
+        ),
+        data=RLDSLiberoDataConfig(
+            repo_id="libero_90",
+            assets=AssetsConfig(
+                # TODO: recompute assets
+                # assets_dir="gs://openpi-assets-simeval/pi05_droid_jointpos/assets",
+                # asset_id="droid",
+            ),
+            # rlds_data_dir="/gpfs/scrubbed/arhanj/datasets",
+            rlds_data_dir="/gscratch/scrubbed/arhanj/datasets",
+        ),
+        weight_loader=weight_loaders.CheckpointWeightLoader("gs://openpi-assets-simeval/pi0_droid_jointpos_100k/params"),
+        lr_schedule=_optimizer.CosineDecaySchedule(
+            warmup_steps=1_000,
+            peak_lr=5e-5,
+            decay_steps=1_000_000,
+            decay_lr=5e-5,
+        ),
+        num_train_steps=10_000,
+        batch_size=128,
+        log_interval=100,
+        save_interval=1000,
+        keep_period=1000,
+        num_workers=0,  # Important: RLDS DataLoader requires num_workers=0, handles multi-processing internally
+    ),
+
+    
+    TrainConfig(
+        name="pi0_fast_droid_libero_fullfinetune",
+        model=pi0_fast.Pi0FASTConfig(
+            action_dim=8,
+            action_horizon=10,
+            max_token_len=180,
+        ),
+        data=RLDSLiberoDataConfig(
+            repo_id="libero_90",
+            assets=AssetsConfig(
+                # TODO: recompute assets
+                # assets_dir="gs://openpi-assets-simeval/pi05_droid_jointpos/assets",
+                # asset_id="droid",
+            ),
+            # rlds_data_dir="/gpfs/scrubbed/arhanj/datasets",
+            rlds_data_dir="/gscratch/scrubbed/arhanj/datasets",
+        ),
+        weight_loader=weight_loaders.CheckpointWeightLoader("gs://openpi-assets-simeval/pi0_fast_droid_jointpos/params"),
+        lr_schedule=_optimizer.CosineDecaySchedule(
+            warmup_steps=1_000,
+            peak_lr=5e-5,
+            decay_steps=1_000_000,
+            decay_lr=5e-5,
+        ),
+        num_train_steps=10_000,
+        batch_size=128,
+        log_interval=100,
+        save_interval=1000,
+        keep_period=1000,
+        num_workers=0,  # Important: RLDS DataLoader requires num_workers=0, handles multi-processing internally
+    ),
+
+
+    ### END LIBERO FULLFINETUNE CONFIGS ###
 
     TrainConfig(
         # This config is for fine-tuning pi0-FAST-base on the *full* DROID dataset.

@@ -14,6 +14,7 @@ import torch
 import openpi.models.model as _model
 import openpi.training.config as _config
 from openpi.training.droid_rlds_dataset import DroidRldsDataset
+from openpi.training.libero_rlds_dataset import LiberoRldsDataset
 import openpi.transforms as _transforms
 
 T_co = TypeVar("T_co", covariant=True)
@@ -158,6 +159,13 @@ def create_rlds_dataset(
     *,
     shuffle: bool = False,
 ) -> Dataset:
+    if data_config.dataset_class is not None:
+        return data_config.dataset_class(
+            data_dir=data_config.rlds_data_dir,
+            batch_size=batch_size,
+            shuffle=shuffle,
+            action_chunk_size=action_horizon,
+        )
     # At the moment, we only support DROID for RLDS datasets.
     if data_config.datasets is not None:
         from openpi.training.multi_rlds_dataset import MultiRldsDataset
@@ -549,3 +557,5 @@ class DataLoaderImpl(DataLoader):
     def __iter__(self):
         for batch in self._data_loader:
             yield _model.Observation.from_dict(batch), batch["actions"]
+
+from openpi.training.libero_rlds_dataset import LiberoRldsDataset
