@@ -34,8 +34,9 @@ class DualCheckpointManager:
     def restore(self, step: int, items: dict):
         restored = {}
         for mng in self.mngs:
-            items = {k: v for k, v in items.items() if self.mng_assignments[k] == mng}
-            restored_single = mng.restore(step, items)
+            # items = {k: v for k, v in items.items() if self.mng_assignments[k] == mng}
+            single_items = {k: v for k, v in items.items() if self.mng_assignments[k] == mng}
+            restored_single = mng.restore(step, single_items)
             restored.update(restored_single)
         return restored
 
