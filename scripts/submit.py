@@ -78,33 +78,40 @@ if __name__ == "__main__":
     print(f" >>> Executing on cluster: {args.executor.cluster} <<< ")
 
     TRAIN_CONFIGS = [
-        # "pi05_droid_jointpos_fullfinetune",
-        # "pi0_fast_droid_jointpos_fullfinetune",
-        # "pi0_droid_jointpos_fullfinetune",
-        # "pi0_droid_jointpos_100k_fullfinetune",
-        # "paligemma_binning_droid_jointpos_fullfinetune",
-        "pi05_droid_libero_fullfinetune",
-        "pi0_fast_droid_libero_fullfinetune",
-        "pi0_droid_libero_fullfinetune",
-        "pi0_droid_libero_100k_fullfinetune",
-        "paligemma_binning_droid_libero_fullfinetune",
+        "pi05_droid_jointpos_fullfinetune",
+        "pi0_fast_droid_jointpos_fullfinetune",
+        "pi0_droid_jointpos_fullfinetune",
+        "pi0_droid_jointpos_100k_fullfinetune",
+        "paligemma_binning_droid_jointpos_fullfinetune",
     ]
-    # VISUAL_FIDELITY = [
-    #     ("splat", "droid_ood_cotrain_robotsplat_dataset:2.0.0"),
-    #     ("raytraced", "droid_ood_cotrain_raytraced_dataset:2.0.0"),
-    #     ("nightmare", "droid_ood_cotrain_nightmare_dataset:2.0.0"),
-    # ]
+    VISUAL_FIDELITY = [
+        # ("splat", "droid_ood_cotrain_robotsplat_dataset:2.0.0"),
+        # ("raytraced", "droid_ood_cotrain_raytraced_dataset:2.0.0"),
+        # ("nightmare", "droid_ood_cotrain_nightmare_dataset:2.0.0"),
+        ("double_nightmare", "droid_ood_cotrain_double_nightmare_dataset:2.0.0"),
+    ]
 
     jobs = []
     with ex.batch():
         for config in TRAIN_CONFIGS:
-            train_cfg = _config._CONFIGS_DICT[config]
-            train_cfg = replace(
-                train_cfg,
-                # overwrite=True, 
-                resume=True,
-                exp_name=f"{args.name}",
-                )
+            for visual_fidelity in VISUAL_FIDELITY:
+                train_cfg = _config._CONFIGS_DICT[config]
+                visual_fidelity_name, visual_fidelity_dataset = visual_fidelity
+                train_cfg = replace(
+                    train_cfg,
+                    overwrite=True, 
+                    exp_name=f"visual-fidelity_{visual_fidelity_name}",
+                    data = replace(
+                        train_cfg.data,
+                        datasets = [
+                            (visual_fidelity_dataset, 0.1),
+                            ("droid:1.0.1", 0.9),
+                        ]
+                    ),
+                    num_train_steps = 1_000,
+                    keep_period = 1000,
+                    save_interval = 1000,
+                    )
 
             job = ex.submit(TrainJob(), train_cfg)
             jobs.append(job)

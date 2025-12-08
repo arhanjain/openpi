@@ -1284,7 +1284,7 @@ _CONFIGS = [
     TrainConfig(
         name="paligemma_binning_droid_libero_fullfinetune",
         model=pi0_fast.Pi0FASTConfig(
-            action_dim=8, 
+            action_dim=7, 
             action_horizon=15, 
             max_token_len=600,
             fast_model_tokenizer=_tokenizer.BinningTokenizer,
@@ -1379,7 +1379,7 @@ _CONFIGS = [
     TrainConfig(
         name="pi0_fast_droid_libero_fullfinetune",
         model=pi0_fast.Pi0FASTConfig(
-            action_dim=8,
+            action_dim=7,
             action_horizon=10,
             max_token_len=180,
         ),
