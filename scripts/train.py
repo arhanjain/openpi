@@ -2,6 +2,7 @@ import dataclasses
 import functools
 import logging
 import platform
+import uuid
 from typing import Any
 
 import etils.epath as epath
@@ -209,12 +210,34 @@ def main(config: _config.TrainConfig):
     data_sharding = jax.sharding.NamedSharding(mesh, jax.sharding.PartitionSpec(sharding.DATA_AXIS))
     replicated_sharding = jax.sharding.NamedSharding(mesh, jax.sharding.PartitionSpec())
 
-    checkpoint_manager, resuming = _checkpoints.initialize_checkpoint_dir(
-        config.checkpoint_dir,
-        keep_period=config.keep_period,
-        overwrite=config.overwrite,
-        resume=config.resume,
-    )
+    # Use simple checkpoint manager if not saving train state (params + assets only)
+    if config.save_train_state:
+        checkpoint_manager, resuming = _checkpoints.initialize_checkpoint_dir(
+            config.checkpoint_dir,
+            keep_period=config.keep_period,
+            overwrite=config.overwrite,
+            resume=config.resume,
+        )
+    else:
+        checkpoint_manager, resuming = _checkpoints.initialize_simple_checkpoint_dir(
+            config.checkpoint_dir,
+            keep_period=config.keep_period,
+            overwrite=config.overwrite,
+            resume=config.resume,
+        )
+        if config.resume:
+            logging.warning("Resume requested but save_train_state=False. Cannot restore train state.")
+    
+    # Set up async S3 uploader if remote checkpoint dir is configured
+    s3_uploader = None
+    if config.remote_checkpoint_dir:
+        s3_uploader = _checkpoints.AsyncS3Uploader(
+            checkpoint_manager,
+            # use wandb unique id to create a unique directory
+            remote_dir=f"{config.remote_checkpoint_dir}/{'wandb-' + wandb.run.id if wandb.run else str(uuid.uuid4())}/",
+        )
+        logging.info(f"S3 uploader configured for: {config.remote_checkpoint_dir}")
+    
     init_wandb(config, resuming=resuming, enabled=config.wandb_enabled)
 
     data_loader = _data_loader.create_data_loader(
@@ -236,8 +259,8 @@ def main(config: _config.TrainConfig):
     jax.block_until_ready(train_state)
     logging.info(f"Initialized train state:\n{training_utils.array_tree_to_info(train_state.params)}")
 
-    if resuming:
-        train_state = _checkpoints.restore_state(checkpoint_manager, train_state, data_loader)
+    if resuming and config.save_train_state:
+        train_state = _checkpoints.restore_state(checkpoint_manager, train_state, data_loader)  # type: ignore[arg-type]
 
     ptrain_step = jax.jit(
         functools.partial(train_step, config),
@@ -269,10 +292,25 @@ def main(config: _config.TrainConfig):
         batch = next(data_iter)
 
         if (step % config.save_interval == 0 and step > start_step) or step == config.num_train_steps - 1 or step in config.specific_checkpoints_to_keep:
-            _checkpoints.save_state(checkpoint_manager, train_state, data_loader, step, save_train_state=config.save_train_state)
+            # Use appropriate save function based on checkpoint manager type
+            if config.save_train_state:
+                saved_dirs = _checkpoints.save_state(checkpoint_manager, train_state, data_loader, step, save_train_state=True)  # type: ignore[arg-type]
+            else:
+                checkpoint_dir = _checkpoints.save_state_simple(checkpoint_manager, train_state, data_loader, step)  # type: ignore[arg-type]
+                saved_dirs = [checkpoint_dir]
+            
+            # Schedule async upload to S3
+            if s3_uploader is not None:
+                for checkpoint_dir in saved_dirs:
+                    s3_uploader.schedule_upload(checkpoint_dir)
 
     logging.info("Waiting for checkpoint manager to finish")
     checkpoint_manager.wait_until_finished()
+    
+    # Wait for S3 uploads to complete
+    if s3_uploader is not None:
+        logging.info("Waiting for S3 uploads to finish")
+        s3_uploader.shutdown(wait=True)
 
 
 if __name__ == "__main__":

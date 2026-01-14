@@ -8,12 +8,31 @@ to the config assets directory.
 import numpy as np
 import tqdm
 import tyro
+import logging
 
 import openpi.models.model as _model
 import openpi.shared.normalize as normalize
 import openpi.training.config as _config
 import openpi.training.data_loader as _data_loader
 import openpi.transforms as transforms
+
+def init_logging():
+    """Custom logging format for better readability."""
+    level_mapping = {"DEBUG": "D", "INFO": "I", "WARNING": "W", "ERROR": "E", "CRITICAL": "C"}
+
+    class CustomFormatter(logging.Formatter):
+        def format(self, record):
+            record.levelname = level_mapping.get(record.levelname, record.levelname)
+            return super().format(record)
+
+    formatter = CustomFormatter(
+        fmt="%(asctime)s.%(msecs)03d [%(levelname)s] %(message)-80s (%(process)d:%(filename)s:%(lineno)s)",
+        datefmt="%H:%M:%S",
+    )
+
+    logger = logging.getLogger()
+    logger.setLevel(logging.INFO)
+    logger.handlers[0].setFormatter(formatter)
 
 
 class RemoveStrings(transforms.DataTransformFn):
@@ -79,6 +98,7 @@ def create_rlds_dataloader(
     else:
         # NOTE: this length is currently hard-coded for DROID.
         num_batches = len(dataset) // batch_size
+    print(f"num_batches: {num_batches}")
     data_loader = _data_loader.RLDSDataLoader(
         dataset,
         num_batches=num_batches,
@@ -106,6 +126,7 @@ def main(config_name: str, max_frames: int | None = None):
         for key in keys:
             stats[key].update(np.asarray(batch[key]))
 
+
     norm_stats = {key: stats.get_statistics() for key, stats in stats.items()}
 
     output_path = config.assets_dirs / data_config.repo_id
@@ -114,4 +135,5 @@ def main(config_name: str, max_frames: int | None = None):
 
 
 if __name__ == "__main__":
+    # init_logging()
     tyro.cli(main)

@@ -22,8 +22,10 @@ import openpi.policies.libero_policy as libero_policy
 import openpi.shared.download as _download
 import openpi.shared.normalize as _normalize
 import openpi.training.droid_rlds_dataset as droid_rlds_dataset
+import openpi.training.libero_rlds_dataset as libero_rlds_dataset
 import openpi.training.misc.polaris_config as polaris_config
 import openpi.training.misc.roboarena_config as roboarena_config
+import openpi.training.misc.sim_improvement_config as sim_improvement_config
 import openpi.training.optimizer as _optimizer
 import openpi.training.weight_loaders as weight_loaders
 import openpi.transforms as _transforms
@@ -95,6 +97,10 @@ class DataConfig:
     action_space: droid_rlds_dataset.DroidActionSpace | None = None
     # List of datasets to sample from: name, version, weight, and optionally filter_dict_path
     datasets: Sequence[droid_rlds_dataset.RLDSDataset] = ()
+    # Custom dataset class for RLDS/HDF5 data loaders
+    dataset_class: type | None = None
+    # Optional filter dictionary path for data filtering
+    filter_dict_path: str | None = None
 
 
 class GroupFactory(Protocol):
@@ -460,7 +466,6 @@ class RLDSDroidDataConfig(DataConfigFactory):
             rlds_data_dir=self.rlds_data_dir,
             datasets=self.datasets,
             action_space=self.action_space,
-            datasets=self.datasets,
         )
 
 
@@ -537,9 +542,9 @@ class TrainConfig:
     data: DataConfigFactory = dataclasses.field(default_factory=FakeDataConfig)
 
     # Base directory for config assets (e.g., norm stats).
-    assets_base_dir: str = "/gpfs/scrubbed/arhanj/openpi/assets"
+    assets_base_dir: str = "./assets"
     # Base directory for checkpoints.
-    checkpoint_base_dir: str = "/gpfs/scrubbed/arhanj/openpi/checkpoints"
+    checkpoint_base_dir: str = "./checkpoints"
 
     # Random seed that will be used by random generators during training.
     seed: int = 42
@@ -570,6 +575,10 @@ class TrainConfig:
 
     # If true, will enable wandb logging.
     wandb_enabled: bool = True
+
+    # Remote checkpoint directory for S3 sync (e.g., "s3://bucket/checkpoints/exp-name").
+    # If set, checkpoints will be asynchronously uploaded to this S3 location.
+    remote_checkpoint_dir: str | None = None
 
     # Used to pass metadata to the policy server.
     policy_metadata: dict[str, Any] | None = None
@@ -1522,6 +1531,8 @@ _CONFIGS = [
     # RoboArena & PolaRiS configs.
     *roboarena_config.get_roboarena_configs(),
     *polaris_config.get_polaris_configs(),
+    # Sim-improvement configs.
+    *sim_improvement_config.get_sim_improvement_configs(),
 ]
 
 if len({config.name for config in _CONFIGS}) != len(_CONFIGS):
