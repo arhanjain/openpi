@@ -26,6 +26,12 @@ import h5py
 import numpy as np
 from tqdm import tqdm
 
+from enum import Enum
+from enum import auto
+
+class ActionSpace(Enum):
+    JOINT_POSITION = auto()
+    # JOINT_VELOCITY = auto()
 
 def _load_demo_worker(args: tuple[str | Path, str, "HDF5DatasetConfig", int]) -> tuple[int, dict[str, Any] | None]:
     """Worker function for parallel demo loading. Must be at module level for pickling."""
@@ -40,6 +46,14 @@ def _load_demo_worker(args: tuple[str | Path, str, "HDF5DatasetConfig", int]) ->
             # Load actions
             actions = np.array(demo[config.action_key])
             
+            # Validate action dimensions based on action space
+            if config.action_space == ActionSpace.JOINT_POSITION:
+                if actions.shape[-1] != 8:
+                    raise ValueError(
+                        f"Expected actions to have 8 dimensions for JOINT_POSITION action space, "
+                        f"but got {actions.shape[-1]} dimensions in demo {demo_key}"
+                    )
+            
             # Load main image
             image = np.array(demo[config.image_key])
             if not config.image_hwc:
@@ -52,21 +66,53 @@ def _load_demo_worker(args: tuple[str | Path, str, "HDF5DatasetConfig", int]) ->
                 if not config.image_hwc:
                     wrist_image = np.transpose(wrist_image, (0, 2, 3, 1))
             
-            # Load state
-            state_keys = config.state_key.split(",")
-            state_parts = []
-            for key in state_keys:
-                key = key.strip()
-                if key in demo.keys():
-                    state_parts.append(np.array(demo[key]))
-            state = np.concatenate(state_parts, axis=-1) if state_parts else None
+            # Load state / joint positions.
+            # Prefer new-style separate arm / gripper keys if configured on the dataset.
+            arm_jp = None
+            gripper_jp = None
+            state = None
+
+            if getattr(config, "arm_joint_pos_key", None) or getattr(config, "gripper_joint_pos_key", None):
+                arm_key = getattr(config, "arm_joint_pos_key", None)
+                gripper_key = getattr(config, "gripper_joint_pos_key", None)
+
+                if arm_key and arm_key in demo.keys():
+                    arm_jp = np.array(demo[arm_key])
+                if gripper_key and gripper_key in demo.keys():
+                    gripper_jp = np.array(demo[gripper_key])
+
+                # Optionally build concatenated legacy state for backwards compat.
+                state_parts = []
+                if arm_jp is not None:
+                    state_parts.append(arm_jp)
+                if gripper_jp is not None:
+                    state_parts.append(gripper_jp)
+                if state_parts:
+                    try:
+                        state = np.concatenate(state_parts, axis=-1)
+                    except Exception:
+                        state = None
+            elif getattr(config, "state_key", None):
+                # Legacy monolithic state key path. Can be comma-separated for multiple keys to concat.
+                state_keys = config.state_key.split(",")
+                state_parts = []
+                for key in state_keys:
+                    key = key.strip()
+                    if key in demo.keys():
+                        state_parts.append(np.array(demo[key]))
+                state = np.concatenate(state_parts, axis=-1) if state_parts else None
             
-            # Compute trajectory length
-            traj_len = min(len(actions), len(image))
+            # Compute trajectory length using all available modalities
+            traj_len_candidates = [len(actions), len(image)]
             if wrist_image is not None:
-                traj_len = min(traj_len, len(wrist_image))
+                traj_len_candidates.append(len(wrist_image))
+            if arm_jp is not None:
+                traj_len_candidates.append(len(arm_jp))
+            if gripper_jp is not None:
+                traj_len_candidates.append(len(gripper_jp))
             if state is not None:
-                traj_len = min(traj_len, len(state))
+                traj_len_candidates.append(len(state))
+            traj_len = min(traj_len_candidates)
             
             # Get prompt
             prompt = config.default_prompt
@@ -94,12 +140,17 @@ def _load_demo_worker(args: tuple[str | Path, str, "HDF5DatasetConfig", int]) ->
                     "image": image,
                     "wrist_image": wrist_image,
                     "state": state,
+                    "arm_jp": arm_jp,
+                    "gripper_jp": gripper_jp,
                 },
                 "prompt": prompt,
                 "traj_len": traj_len,
             }
     except Exception as e:
         logging.warning(f"Error loading demo {demo_key}: {e}")
+        # full stack trace
+        import traceback
+        traceback.print_exc()
         return demo_idx, None
 
 
@@ -112,8 +163,16 @@ class HDF5DatasetConfig:
     # Path patterns within HDF5 file (relative to each demo group)
     image_key: str = "obs/agentview_image"
     wrist_image_key: str | None = "obs/eye_in_hand_image"
-    state_key: str = "obs/robot0_eef_pos"  # Can be comma-separated for multiple keys to concat
+    # Legacy monolithic state key. Can be comma-separated for multiple keys to concat.
+    # Newer configs should prefer arm_joint_pos_key / gripper_joint_pos_key instead.
+    state_key: str | None = "obs/robot0_eef_pos"
+    # Optional separate keys for arm and gripper joint positions.
+    arm_joint_pos_key: str | None = None
+    gripper_joint_pos_key: str | None = None
     action_key: str = "actions"
+    
+    # Action space configuration
+    action_space: ActionSpace = ActionSpace.JOINT_POSITION
     
     # Language instruction source
     # If None, will look for 'language_instruction' attribute on demo group
@@ -274,8 +333,14 @@ class HDF5Dataset:
             total_bytes += demo_data["observation"]["image"].nbytes
             if demo_data["observation"]["wrist_image"] is not None:
                 total_bytes += demo_data["observation"]["wrist_image"].nbytes
-            if demo_data["observation"]["state"] is not None:
-                total_bytes += demo_data["observation"]["state"].nbytes
+            # Optional state / joint position observations
+            state_arr = demo_data["observation"].get("state")
+            if state_arr is not None:
+                total_bytes += state_arr.nbytes
+            for key in ("arm_jp", "gripper_jp"):
+                arr = demo_data["observation"].get(key)
+                if arr is not None:
+                    total_bytes += arr.nbytes
         
         print(f"Preloaded {len(self._preloaded_data)} demos, {self._total_steps} steps ({total_bytes / 1e9:.2f} GB)")
     
@@ -374,6 +439,14 @@ class HDF5Dataset:
             # Load actions
             actions = np.array(demo[self.config.action_key])
             
+            # Validate action dimensions based on action space
+            if self.config.action_space == ActionSpace.JOINT_POSITION:
+                if actions.shape[-1] != 8:
+                    raise ValueError(
+                        f"Expected actions to have 8 dimensions for JOINT_POSITION action space, "
+                        f"but got {actions.shape[-1]} dimensions in demo {demo_key}"
+                    )
+            
             # Load main image
             image = np.array(demo[self.config.image_key])
             if not self.config.image_hwc:
@@ -387,22 +460,53 @@ class HDF5Dataset:
                 if not self.config.image_hwc:
                     wrist_image = np.transpose(wrist_image, (0, 2, 3, 1))
             
-            # Load state (potentially concatenating multiple keys)
-            state_keys = self.config.state_key.split(",")
-            state_parts = []
-            for key in state_keys:
-                key = key.strip()
-                if key in demo.keys():
-                    state_parts.append(np.array(demo[key]))
-            
-            state = np.concatenate(state_parts, axis=-1) if state_parts else None
+            # Load state / joint positions
+            arm_jp = None
+            gripper_jp = None
+            state = None
+
+            # Prefer new-style separate arm / gripper keys if provided.
+            if getattr(self.config, "arm_joint_pos_key", None) or getattr(self.config, "gripper_joint_pos_key", None):
+                arm_key = getattr(self.config, "arm_joint_pos_key", None)
+                gripper_key = getattr(self.config, "gripper_joint_pos_key", None)
+
+                if arm_key and arm_key in demo.keys():
+                    arm_jp = np.array(demo[arm_key])
+                if gripper_key and gripper_key in demo.keys():
+                    gripper_jp = np.array(demo[gripper_key])
+
+                # Optionally build concatenated legacy state for backwards compat.
+                state_parts = []
+                if arm_jp is not None:
+                    state_parts.append(arm_jp)
+                if gripper_jp is not None:
+                    state_parts.append(gripper_jp)
+                if state_parts:
+                    try:
+                        state = np.concatenate(state_parts, axis=-1)
+                    except Exception:
+                        state = None
+            elif getattr(self.config, "state_key", None):
+                # Legacy monolithic state key path. Can be comma-separated for multiple keys to concat.
+                state_keys = self.config.state_key.split(",")
+                state_parts = []
+                for key in state_keys:
+                    key = key.strip()
+                    if key in demo.keys():
+                        state_parts.append(np.array(demo[key]))
+                state = np.concatenate(state_parts, axis=-1) if state_parts else None
             
             # Use minimum length across all arrays to avoid index errors
-            traj_len = min(len(actions), len(image))
+            traj_len_candidates = [len(actions), len(image)]
             if wrist_image is not None:
-                traj_len = min(traj_len, len(wrist_image))
+                traj_len_candidates.append(len(wrist_image))
+            if arm_jp is not None:
+                traj_len_candidates.append(len(arm_jp))
+            if gripper_jp is not None:
+                traj_len_candidates.append(len(gripper_jp))
             if state is not None:
-                traj_len = min(traj_len, len(state))
+                traj_len_candidates.append(len(state))
+            traj_len = min(traj_len_candidates)
             
             # Get prompt
             prompt = self.config.default_prompt
@@ -430,6 +534,8 @@ class HDF5Dataset:
                     "image": image,
                     "wrist_image": wrist_image,
                     "state": state,
+                    "arm_jp": arm_jp,
+                    "gripper_jp": gripper_jp,
                 },
                 "prompt": prompt,
                 "traj_len": traj_len,
@@ -512,13 +618,31 @@ class HDF5Dataset:
             np.random.shuffle(timesteps)
         
         for t in timesteps:
+            obs = demo_data["observation"]
+
+            sample_obs: dict[str, Any] = {
+                "image": obs["image"][t],
+                "wrist_image": obs["wrist_image"][t],
+            }
+
+            # Prefer explicitly loaded arm / gripper joint positions if available.
+            if obs.get("arm_jp") is not None:
+                sample_obs["arm_jp"] = obs["arm_jp"][t]
+            if obs.get("gripper_jp") is not None:
+                sample_obs["gripper_jp"] = obs["gripper_jp"][t]
+
+            # Backwards-compatible path: derive arm/gripper from legacy concatenated state
+            if ("arm_jp" not in sample_obs or "gripper_jp" not in sample_obs) and obs.get("state") is not None:
+                state_t = obs["state"][t]
+                # Only use this split if we didn't already populate both from explicit keys.
+                if "arm_jp" not in sample_obs:
+                    sample_obs["arm_jp"] = state_t[:-1]
+                if "gripper_jp" not in sample_obs:
+                    sample_obs["gripper_jp"] = state_t[-1:]
+
             sample = {
                 "actions": actions[t],
-                "observation": {
-                    "image": demo_data["observation"]["image"][t],
-                    "wrist_image": demo_data["observation"]["wrist_image"][t],
-                    "state": demo_data["observation"]["state"][t],
-                },
+                "observation": sample_obs,
                 "prompt": demo_data["prompt"],
             }
             
@@ -590,9 +714,14 @@ class HDF5Dataset:
                 [s["observation"]["wrist_image"] for s in samples], axis=0
             )
         
-        if "state" in samples[0]["observation"]:
-            batch["observation"]["state"] = np.stack(
-                [s["observation"]["state"] for s in samples], axis=0
+        if "arm_jp" in samples[0]["observation"]:
+            batch["observation"]["arm_jp"] = np.stack(
+                [s["observation"]["arm_jp"] for s in samples], axis=0
+            )
+        
+        if "gripper_jp" in samples[0]["observation"]:
+            batch["observation"]["gripper_jp"] = np.stack(
+                [s["observation"]["gripper_jp"] for s in samples], axis=0
             )
         
         return batch
