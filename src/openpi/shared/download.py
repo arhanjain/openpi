@@ -114,6 +114,20 @@ def _download_fsspec(url: str, local_path: pathlib.Path, **kwargs) -> None:
             current_size = sum(f.stat().st_size for f in [*local_path.rglob("*"), local_path] if f.is_file())
             pbar.update(current_size - pbar.n)
             time.sleep(1)
+
+        # Check if the download raised an exception
+        exc = future.exception()
+        if exc is not None:
+            raise RuntimeError(f"Download failed for {url}") from exc
+
+        # Verify download size
+        actual_size = sum(f.stat().st_size for f in [*local_path.rglob("*"), local_path] if f.is_file())
+        if actual_size < total_size * 0.99:  # Allow 1% tolerance for filesystem overhead
+            raise RuntimeError(
+                f"Download incomplete for {url}: got {actual_size:,} bytes, expected {total_size:,} bytes "
+                f"({actual_size / total_size * 100:.1f}% complete)"
+            )
+
         pbar.update(total_size - pbar.n)
 
 

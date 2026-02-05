@@ -29,6 +29,47 @@ import openpi.training.utils as training_utils
 import openpi.training.weight_loaders as _weight_loaders
 
 
+def log_disk_usage(label: str = ""):
+    """Log disk usage for debugging storage issues."""
+    import subprocess
+    import shutil
+
+    label_str = f" ({label})" if label else ""
+    logging.info(f"=== Disk Usage{label_str} ===")
+
+    # df -h output
+    try:
+        df_output = subprocess.check_output(["df", "-h"], stderr=subprocess.DEVNULL).decode()
+        for line in df_output.strip().split('\n'):
+            logging.info(f"  {line}")
+    except Exception as e:
+        logging.warning(f"  df -h failed: {e}")
+
+    # Key directory sizes
+    logging.info("  --- Key directories ---")
+    key_dirs = [
+        "/opt/ml",
+        "/opt/ml/.cache",
+        "/opt/ml/.cache/openpi",
+        "/tmp",
+        "/root/.cache",
+        str(epath.Path("~/.cache").expanduser()),
+    ]
+    for d in key_dirs:
+        try:
+            if epath.Path(d).exists():
+                total, used, free = shutil.disk_usage(d)
+                # Also get directory size
+                du_output = subprocess.check_output(
+                    ["du", "-sh", d], stderr=subprocess.DEVNULL
+                ).decode().split()[0]
+                logging.info(f"  {d}: {du_output} (on fs with {free // (1024**3)}GB free)")
+        except Exception:
+            pass
+
+    logging.info("=" * 40)
+
+
 def init_logging():
     """Custom logging format for better readability."""
     level_mapping = {"DEBUG": "D", "INFO": "I", "WARNING": "W", "ERROR": "E", "CRITICAL": "C"}
@@ -195,6 +236,7 @@ def train_step(
 def main(config: _config.TrainConfig):
     init_logging()
     logging.info(f"Running on: {platform.node()}")
+    log_disk_usage("startup")
 
     if config.batch_size % jax.device_count() != 0:
         raise ValueError(
@@ -228,7 +270,9 @@ def main(config: _config.TrainConfig):
         if config.resume:
             logging.warning("Resume requested but save_train_state=False. Cannot restore train state.")
     
-    # Set up async S3 uploader if remote checkpoint dir is configured
+    init_wandb(config, resuming=resuming, enabled=config.wandb_enabled)
+
+    # Set up async S3 uploader if remote checkpoint dir is configured (after wandb init so we have run id)
     s3_uploader = None
     if config.remote_checkpoint_dir:
         s3_uploader = _checkpoints.AsyncS3Uploader(
@@ -236,9 +280,10 @@ def main(config: _config.TrainConfig):
             # use wandb unique id to create a unique directory
             remote_dir=f"{config.remote_checkpoint_dir}/{'wandb-' + wandb.run.id if wandb.run else str(uuid.uuid4())}/",
         )
-        logging.info(f"S3 uploader configured for: {config.remote_checkpoint_dir}")
-    
-    init_wandb(config, resuming=resuming, enabled=config.wandb_enabled)
+        logging.info(f"S3 uploader configured for: {s3_uploader.remote_dir}")
+        # Log full S3 path to wandb config for easy lookup
+        if wandb.run:
+            wandb.config.update({"s3_checkpoint_path": s3_uploader.remote_dir}, allow_val_change=True)
 
     data_loader = _data_loader.create_data_loader(
         config,
@@ -248,6 +293,7 @@ def main(config: _config.TrainConfig):
     data_iter = iter(data_loader)
     batch = next(data_iter)
     logging.info(f"Initialized data loader:\n{training_utils.array_tree_to_info(batch)}")
+    log_disk_usage("after data loader init")
 
     images_to_log = [
         wandb.Image(np.concatenate([np.array(img[i]) for img in batch[0].images.values()], axis=1))
@@ -258,6 +304,7 @@ def main(config: _config.TrainConfig):
     train_state, train_state_sharding = init_train_state(config, init_rng, mesh, resume=resuming)
     jax.block_until_ready(train_state)
     logging.info(f"Initialized train state:\n{training_utils.array_tree_to_info(train_state.params)}")
+    log_disk_usage("after train state init")
 
     if resuming and config.save_train_state:
         train_state = _checkpoints.restore_state(checkpoint_manager, train_state, data_loader)  # type: ignore[arg-type]

@@ -1,4 +1,4 @@
-"""Sim-improvement configs and HDF5 data loading support."""
+"""Sim-improvement configs and HDF5/MDS data loading support."""
 
 import dataclasses
 import pathlib
@@ -10,7 +10,10 @@ import tyro
 import openpi.models.model as _model
 import openpi.models.pi0_config as pi0_config
 import openpi.models.pi0_fast as pi0_fast
-import openpi.policies.ur_policy as ur_policy
+# import openpi.policies.ur_policy as ur_policy
+import openpi.policies.droid_policy as droid_policy
+from openpi.training.hdf5_dataset import ActionSpace
+from openpi.training.mds_dataset import ActionSpace as MDSActionSpace
 import openpi.training.optimizer as _optimizer
 import openpi.training.weight_loaders as weight_loaders
 import openpi.transforms as _transforms
@@ -38,14 +41,18 @@ class HDF5DataConfig:
     # HDF5 structure configuration
     image_key: str = "obs/agentview_image"
     wrist_image_key: str | None = "obs/eye_in_hand_image"
-    state_key: str = "obs/robot0_eef_pos"  # Comma-separated for multiple keys
+    # New-style separate arm / gripper joint position keys. Optional; if unset, falls back to state_key.
+    arm_joint_pos_key: str | None = None
+    gripper_joint_pos_key: str | None = None
+    # Legacy monolithic state key (can be comma-separated for multiple keys).
+    state_key: str | None = None
     action_key: str = "actions"
     demo_group_pattern: str = "data/demo_*"
     
     # Default prompt if not stored in HDF5
     default_prompt: str | None = None
     prompt_key: str | None = None  # HDF5 key for prompt, if stored in data
-    
+    action_space: ActionSpace = ActionSpace.JOINT_POSITION
     # Image format
     image_hwc: bool = True  # If True, images are (H, W, C), else (C, H, W)
     
@@ -91,7 +98,9 @@ class HDF5DataConfig:
                         {
                             "observation/exterior_image_1_left": "observation/image",
                             "observation/wrist_image_left": "observation/wrist_image",
-                            "observation/state": "observation/state",
+                            "observation/joint_position": "observation/arm_jp",
+                            "observation/gripper_position": "observation/gripper_jp",
+                            # "observation/state": "observation/state",
                             "actions": "actions",
                             "prompt": "prompt",
                         }
@@ -107,11 +116,23 @@ class HDF5DataConfig:
         #         inputs=[libero_policy.LiberoInputs(model_type=model_config.model_type)],
         #         outputs=[libero_policy.LiberoOutputs()],
         #     )
+        # data_transforms = _transforms.Group(
+        #     inputs=[ur_policy.URInputs(model_type=model_config.model_type)],
+        #     outputs=[ur_policy.UROutputs()],
+        # )
         data_transforms = _transforms.Group(
-            inputs=[ur_policy.URInputs(model_type=model_config.model_type)],
-            outputs=[ur_policy.UROutputs()],
+            inputs=[droid_policy.DroidInputs(model_type=model_config.model_type)],
+            outputs=[droid_policy.DroidOutputs()],
         )
-        
+
+        if self.action_space == ActionSpace.JOINT_POSITION:
+            delta_action_mask = _transforms.make_bool_mask(7, -1)
+            data_transforms = data_transforms.push(
+                inputs=[_transforms.DeltaActions(delta_action_mask)],
+                outputs=[_transforms.AbsoluteActions(delta_action_mask)],
+            )
+
+
         model_transforms = ModelTransformFactory(default_prompt=self.default_prompt)(model_config)
         
         assert self.hdf5_file is not None, "Need to set hdf5_file for HDF5 data loader."
@@ -121,6 +142,8 @@ class HDF5DataConfig:
             image_key=self.image_key,
             wrist_image_key=self.wrist_image_key,
             state_key=self.state_key,
+            arm_joint_pos_key=self.arm_joint_pos_key,
+            gripper_joint_pos_key=self.gripper_joint_pos_key,
             action_key=self.action_key,
             default_prompt=self.default_prompt,
             prompt_key=self.prompt_key,
@@ -161,15 +184,263 @@ class HDF5DataConfig:
         )
 
 
+@dataclasses.dataclass(frozen=True)
+class MDSDataConfig:
+    """
+    Config for training on MDS (MosaicML Streaming) datasets.
+
+    MDS provides:
+    - Smart S3 streaming with local caching
+    - Deterministic shuffling (reproducible across runs)
+    - Elastic resume (restart from exact sample position)
+
+    Memory modes:
+    - S3 streaming: Automatic caching, minimal local storage
+    - Local: Fast access, full dataset on disk
+    """
+    # The LeRobot repo id (used for asset lookup).
+    repo_id: str = tyro.MISSING
+
+    # Path to MDS dataset (local dir or s3://bucket/prefix)
+    mds_path: str | None = None
+
+    # Local cache directory for S3 streaming
+    local_cache: str = "/tmp/mds_cache"
+
+    # MDS column names
+    external_cam_key: str = "external_cam"
+    wrist_cam_key: str | None = "wrist_cam"
+    state_key: str | None = "state"
+    arm_joint_pos_key: str | None = None
+    gripper_joint_pos_key: str | None = None
+    action_key: str = "action_chunk"
+
+    # Default prompt if not stored in MDS
+    default_prompt: str | None = None
+    prompt_key: str | None = "prompt"
+
+    # Action space configuration
+    action_space: MDSActionSpace = MDSActionSpace.JOINT_POSITION
+
+    # Cache settings
+    cache_limit: str | None = None  # e.g., "10gb"
+    predownload: int | None = None  # Number of samples to predownload
+
+    # Repack transform customization
+    repack_transforms: tyro.conf.Suppress[_transforms.Group | None] = None
+
+    # Assets configuration
+    assets_dir: str | None = None
+    asset_id: str | None = None
+
+    def create(self, assets_dirs: pathlib.Path, model_config: _model.BaseModelConfig):
+        """Create a DataConfig from this MDSDataConfig."""
+        from openpi.training.config import DataConfig, ModelTransformFactory
+        from openpi.training.mds_dataset import MDSDatasetConfig, RepeatableMDSDataset
+        import openpi.shared.download as _download
+        import openpi.shared.normalize as _normalize
+        import etils.epath as epath
+        import logging
+
+        # Load norm stats
+        norm_stats = None
+        asset_id = self.asset_id or self.repo_id
+        if asset_id:
+            data_assets_dir = str(epath.Path(self.assets_dir or assets_dirs) / asset_id)
+            try:
+                norm_stats = _normalize.load(_download.maybe_download(data_assets_dir))
+                logging.info(f"Loaded norm stats from {data_assets_dir}")
+            except FileNotFoundError:
+                logging.info(f"Norm stats not found in {data_assets_dir}, skipping.")
+
+        # Default repack transform
+        repack_transform = self.repack_transforms
+        if repack_transform is None:
+            repack_transform = _transforms.Group(
+                inputs=[
+                    _transforms.RepackTransform(
+                        {
+                            "observation/exterior_image_1_left": "observation/image",
+                            "observation/wrist_image_left": "observation/wrist_image",
+                            "observation/joint_position": "observation/arm_jp",
+                            "observation/gripper_position": "observation/gripper_jp",
+                            "actions": "actions",
+                            "prompt": "prompt",
+                        }
+                    )
+                ]
+            )
+
+        # Data transforms
+        data_transforms = _transforms.Group(
+            inputs=[droid_policy.DroidInputs(model_type=model_config.model_type)],
+            outputs=[droid_policy.DroidOutputs()],
+        )
+
+        if self.action_space == MDSActionSpace.JOINT_POSITION:
+            delta_action_mask = _transforms.make_bool_mask(7, -1)
+            data_transforms = data_transforms.push(
+                inputs=[_transforms.DeltaActions(delta_action_mask)],
+                outputs=[_transforms.AbsoluteActions(delta_action_mask)],
+            )
+
+        model_transforms = ModelTransformFactory(default_prompt=self.default_prompt)(model_config)
+
+        assert self.mds_path is not None, "Need to set mds_path for MDS data loader."
+
+        # Create MDS config
+        mds_config = MDSDatasetConfig(
+            external_cam_key=self.external_cam_key,
+            wrist_cam_key=self.wrist_cam_key,
+            state_key=self.state_key,
+            arm_joint_pos_key=self.arm_joint_pos_key,
+            gripper_joint_pos_key=self.gripper_joint_pos_key,
+            action_key=self.action_key,
+            default_prompt=self.default_prompt,
+            prompt_key=self.prompt_key,
+        )
+
+        # Capture config values for closure
+        mds_path = self.mds_path
+        local_cache = self.local_cache
+        cache_limit = self.cache_limit
+        predownload = self.predownload
+
+        # Create a dataset class that passes config
+        class ConfiguredMDSDataset(RepeatableMDSDataset):
+            def __init__(
+                self,
+                data_dir: str,
+                batch_size: int,
+                *,
+                shuffle: bool = True,
+                action_chunk_size: int = 16,
+                **kwargs
+            ):
+                # data_dir is ignored, we use mds_path from closure
+                super().__init__(
+                    remote=mds_path,
+                    batch_size=batch_size,
+                    local=local_cache,
+                    shuffle=shuffle,
+                    action_chunk_size=action_chunk_size,
+                    config=mds_config,
+                    cache_limit=cache_limit,
+                    predownload=predownload,
+                    **kwargs,
+                )
+
+        return DataConfig(
+            repo_id=self.repo_id if self.repo_id is not tyro.MISSING else None,
+            asset_id=asset_id,
+            norm_stats=norm_stats,
+            repack_transforms=repack_transform,
+            data_transforms=data_transforms,
+            model_transforms=model_transforms,
+            use_quantile_norm=model_config.model_type != ModelType.PI0,
+            rlds_data_dir=self.mds_path,
+            dataset_class=ConfiguredMDSDataset,
+        )
+
+
 def get_sim_improvement_configs():
     """Return sim-improvement training configs."""
     # Import here to avoid circular imports.
     from openpi.training.config import TrainConfig, FakeDataConfig, AssetsConfig
+    # from openpi.training.misc.sim_improvement_config import HDF5DataConfig
+    from openpi.training.config import LeRobotLiberoDataConfig, DataConfig
     
     return [
         TrainConfig(
+            name="pi05_droid_jointpos_cubeonplate",
+            # model=pi0_config.Pi0Config(pi05=True, paligemma_variant="dummy", action_expert_variant="dummy"),
+            model=pi0_config.Pi0Config(action_horizon=15, pi05=True),
+            data=HDF5DataConfig(
+                repo_id="cube_on_plate",
+                # hdf5_file="s3://tri-ml-datasets-uw2/arhanjain/rollout_datasets/cube_on_plate_small.hdf5",
+                hdf5_file="s3://tri-ml-datasets-uw2/arhanjain/rollout_datasets/cube_on_plate_1k.hdf5",
+                # hdf5_file="/home/arhanjain/projects/UWLab/rollout_dataset/cube_on_plate_small.hdf5",
+
+                # assets_dir="./assets/pi05_droid_jointpos_cubeonplate",
+                # asset_id="cube_on_plate",
+                assets_dir="gs://openpi-assets/checkpoints/pi05_droid_jointpos/assets",
+                asset_id="droid",
+
+                default_prompt="Put the green cube on the plate",
+                image_key="external_camera",
+                wrist_image_key="wrist_camera",
+                # state_key="obs/vision/joint_pos",
+                arm_joint_pos_key="obs.vision.arm_joint_pos",
+                gripper_joint_pos_key="obs.vision.gripper_pos",
+
+                action_space=ActionSpace.JOINT_POSITION,
+                # action_key="action/droid_joint_pos_action",
+                action_key="action_chunk",
+
+                demo_group_pattern="data/demo_*",
+                preload=True,
+            ),
+            weight_loader=weight_loaders.CheckpointWeightLoader(
+                "gs://openpi-assets/checkpoints/pi05_droid_jointpos/params",
+            ),
+            batch_size=256,
+            num_train_steps=50_000,
+            log_interval=100,
+            save_interval=5000,
+            keep_period=1000,
+            save_train_state=False,
+
+            overwrite=True,
+            exp_name="cubeonplate",
+            wandb_enabled=True,
+            remote_checkpoint_dir="s3://tri-ml-datasets-uw2/arhanjain/openpi",
+        ),
+
+        TrainConfig(
+            name="pi05_droid_jointpos_test",
+            model=pi0_config.Pi0Config(pi05=True, paligemma_variant="gemma_2b_lora", action_expert_variant="gemma_300m_lora"),
+            data=HDF5DataConfig(
+                repo_id="cube_on_plate",
+                hdf5_file="s3://tri-ml-datasets-uw2/arhanjain/rollout_datasets/cube_on_plate_small.hdf5",
+
+                assets_dir="gs://openpi-assets/checkpoints/pi05_droid_jointpos/assets",
+                asset_id="droid",
+
+                default_prompt="Put the green cube on the plate",
+                image_key="obs/vision/external_camera",
+                wrist_image_key="obs/vision/wrist_camera",
+                # state_key="obs/vision/joint_pos",
+                arm_joint_pos_key="obs/vision/arm_joint_pos",
+                gripper_joint_pos_key="obs/vision/gripper_pos",
+
+                action_space=ActionSpace.JOINT_POSITION,
+                action_key="action/droid_joint_pos_action",
+
+                demo_group_pattern="data/demo_*",
+                preload=False,
+            ),
+            weight_loader=weight_loaders.CheckpointWeightLoader(
+                "gs://openpi-assets/checkpoints/pi05_droid_jointpos/params",
+            ),
+            freeze_filter=pi0_config.Pi0Config(
+                paligemma_variant="gemma_2b_lora", action_expert_variant="gemma_300m_lora"
+            ).get_freeze_filter(),
+            ema_decay=None,
+            batch_size=8,
+            num_train_steps=10,
+            log_interval=1,
+            save_interval=10,
+            keep_period=1,
+            save_train_state=False,
+            overwrite=True,
+            exp_name="test",
+            wandb_enabled=True,
+            remote_checkpoint_dir=None,
+        ),
+
+        TrainConfig(
             name="pi05_cubestack_test",
-            model=pi0_config.Pi0Config(pi05=True, paligemma_variant="dummy", action_expert_variant="dummy"),
+            model=pi0_config.Pi0Config(pi05=True, paligemma_variant="gemma_2b_lora", action_expert_variant="gemma_300m_lora"),
             data=HDF5DataConfig(
                 repo_id="cubestack_small",
                 hdf5_file="s3://tri-ml-datasets-uw2/arhanjain/rollout_datasets/cubestack_small.hdf5",
@@ -179,12 +450,21 @@ def get_sim_improvement_configs():
 
                 image_key="obs/vision/external_camera",
                 wrist_image_key="obs/vision/wrist_camera",
-                state_key="obs/vision/joint_pos",
+                # state_key="obs/vision/joint_pos",
+                arm_joint_pos_key="obs/vision/joint_pos",
+                gripper_joint_pos_key="obs/vision/gripper_pos",
                 action_key="action",
                 demo_group_pattern="data/demo_*",
                 preload=True,
             ),
-            batch_size=8,
+            weight_loader=weight_loaders.CheckpointWeightLoader(
+                "gs://openpi-assets/checkpoints/pi05_droid_jointpos/params",
+            ),
+            batch_size=1,
+            freeze_filter=pi0_config.Pi0Config(
+                paligemma_variant="gemma_2b_lora", action_expert_variant="gemma_300m_lora"
+            ).get_freeze_filter(),
+            ema_decay=None,
             num_train_steps=200,
             save_interval=100,
             keep_period=100,
@@ -229,6 +509,95 @@ def get_sim_improvement_configs():
             exp_name="v1",
             wandb_enabled=True,
             remote_checkpoint_dir="s3://tri-ml-datasets-uw2/arhanjain/openpi",
+        ),
+
+        # Example MDS (MosaicML Streaming) dataset config
+        TrainConfig(
+            name="pi05_droid_jointpos_mds",
+            model=pi0_config.Pi0Config(action_horizon=15, pi05=True),
+            data=MDSDataConfig(
+                repo_id="cube_on_plate_mds",
+                # MDS path can be local or S3
+                mds_path="s3://your-bucket/datasets/cube_on_plate_mds",
+                local_cache="/tmp/mds_cache",
+
+                # Assets for normalization stats
+                assets_dir="gs://openpi-assets/checkpoints/pi05_droid_jointpos/assets",
+                asset_id="droid",
+
+                default_prompt="Put the green cube on the plate",
+
+                # MDS column names (matching the schema from convert_npz_to_mds.py)
+                external_cam_key="external_cam",
+                wrist_cam_key="wrist_cam",
+                state_key="state",
+                action_key="action_chunk",
+                prompt_key="prompt",
+
+                action_space=MDSActionSpace.JOINT_POSITION,
+
+                # Cache settings for S3 streaming
+                cache_limit="50gb",
+            ),
+            weight_loader=weight_loaders.CheckpointWeightLoader(
+                "gs://openpi-assets/checkpoints/pi05_droid_jointpos/params",
+            ),
+            batch_size=256,
+            num_train_steps=50_000,
+            log_interval=100,
+            save_interval=5000,
+            keep_period=1000,
+            num_workers=0,  # Important: RLDS DataLoader requires num_workers=0, handles multi-processing internally
+            save_train_state=False,
+
+            overwrite=True,
+            exp_name="mds_example",
+            wandb_enabled=True,
+            remote_checkpoint_dir="s3://tri-ml-datasets-uw2/arhanjain/openpi",
+        ),
+
+        # Test MDS config with pi0_fast (small batch for quick testing)
+        TrainConfig(
+            name="pi05_dummy_mds_test",
+            model=pi0_config.Pi0Config(
+                action_horizon=15,
+                pi05=True,
+                paligemma_variant="dummy",
+                action_expert_variant="dummy",
+            ),
+            data=MDSDataConfig(
+                repo_id="cube_to_plate_test",
+                mds_path="s3://tri-ml-datasets-uw2/arhanjain/rollout_datasets/cube_to_plate_test/mds/",
+                local_cache="/tmp/mds_cache",
+
+                assets_dir="gs://openpi-assets/checkpoints/pi0_fast_droid_jointpos/assets",
+                asset_id="droid",
+
+                default_prompt="Put the cube on the plate",
+
+                # MDS column names
+                external_cam_key="external_cam",
+                wrist_cam_key="wrist_cam",
+                state_key="state",
+                action_key="action_chunk",
+                prompt_key="prompt",
+
+                action_space=MDSActionSpace.JOINT_POSITION,
+                cache_limit="100gb",
+            ),
+            # weight_loader=weight_loaders.CheckpointWeightLoader(
+            #     "gs://openpi-assets/checkpoints/pi0_fast_droid_jointpos/params",
+            # ),
+            batch_size=8,
+            num_train_steps=100,
+            log_interval=10,
+            save_interval=50,
+            keep_period=50,
+            num_workers=0,
+            save_train_state=False,
+            overwrite=True,
+            exp_name="mds_test",
+            wandb_enabled=False,
         ),
     ]
 
