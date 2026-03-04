@@ -258,7 +258,8 @@ class AbsoluteActions(DataTransformFn):
         state, actions = data["state"], data["actions"]
         mask = np.asarray(self.mask)
         dims = mask.shape[-1]
-        actions[..., :dims] += np.expand_dims(np.where(mask, state[..., :dims], 0), axis=-2)
+        delta = np.expand_dims(np.where(mask, state[..., :dims], 0), axis=-2)
+        actions = actions.at[..., :dims].add(delta)
         data["actions"] = actions
 
         return data

@@ -356,7 +356,7 @@ class LeRobotLiberoDataConfig(DataConfigFactory):
 @dataclasses.dataclass(frozen=True)
 class RLDSLiberoDataConfig(DataConfigFactory):
     rlds_data_dir: str | None = None
-    dataset_class = libero_rlds_dataset.LiberoRldsDataset
+    # dataset_class = libero_rlds_dataset.LiberoRldsDataset
     @override
     def create(self, assets_dirs: pathlib.Path, model_config: _model.BaseModelConfig) -> DataConfig:
         repack_transform = _transforms.Group(
@@ -460,7 +460,6 @@ class RLDSDroidDataConfig(DataConfigFactory):
             rlds_data_dir=self.rlds_data_dir,
             datasets=self.datasets,
             action_space=self.action_space,
-            datasets=self.datasets,
         )
 
 

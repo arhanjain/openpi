@@ -68,14 +68,23 @@ class Policy(BasePolicy):
     def infer(self, obs: dict, *, noise: np.ndarray | None = None) -> dict:  # type: ignore[misc]
         # Make a copy since transformations may modify the inputs in place.
         inputs = jax.tree.map(lambda x: x, obs)
-        inputs = self._input_transform(inputs)
+
+
+        # Batch the inputs
+        _is_leaf = lambda x: isinstance(x, (list, np.ndarray, jnp.ndarray))
+        batch_size = jax.tree.leaves(inputs, is_leaf=_is_leaf)[0].shape[0]
+        inputs = jax.tree.map(
+            lambda *xs: np.stack(xs),
+            *[self._input_transform(jax.tree.map(lambda x: x[i], inputs, is_leaf=_is_leaf)) for i in range(batch_size)]
+        )
+
         if not self._is_pytorch_model:
-            # Make a batch and convert to jax.Array.
-            inputs = jax.tree.map(lambda x: jnp.asarray(x)[np.newaxis, ...], inputs)
+            # Convert to jax.Array.
+            inputs = jax.tree.map(lambda x: jnp.asarray(x), inputs, is_leaf=_is_leaf)
             self._rng, sample_rng_or_pytorch_device = jax.random.split(self._rng)
         else:
             # Convert inputs to PyTorch tensors and move to correct device
-            inputs = jax.tree.map(lambda x: torch.from_numpy(np.array(x)).to(self._pytorch_device)[None, ...], inputs)
+            inputs = jax.tree.map(lambda x: torch.from_numpy(np.array(x)).to(self._pytorch_device), inputs, is_leaf=_is_leaf)
             sample_rng_or_pytorch_device = self._pytorch_device
 
         # Prepare kwargs for sample_actions
@@ -95,9 +104,7 @@ class Policy(BasePolicy):
         }
         model_time = time.monotonic() - start_time
         if self._is_pytorch_model:
-            outputs = jax.tree.map(lambda x: np.asarray(x[0, ...].detach().cpu()), outputs)
-        else:
-            outputs = jax.tree.map(lambda x: np.asarray(x[0, ...]), outputs)
+            outputs = jax.tree.map(lambda x: np.asarray(x.detach().cpu()), outputs, is_leaf=_is_leaf)
 
         outputs = self._output_transform(outputs)
         outputs["policy_timing"] = {
