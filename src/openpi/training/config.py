@@ -24,6 +24,7 @@ import openpi.shared.normalize as _normalize
 import openpi.training.droid_rlds_dataset as droid_rlds_dataset
 import openpi.training.libero_rlds_dataset as libero_rlds_dataset
 import openpi.training.misc.polaris_config as polaris_config
+import openpi.training.patrick_config as patrick_config
 import openpi.training.misc.roboarena_config as roboarena_config
 import openpi.training.misc.sim_improvement_config as sim_improvement_config
 import openpi.training.optimizer as _optimizer
@@ -1539,6 +1540,8 @@ _CONFIGS = [
     *polaris_config.get_polaris_configs(),
     # Sim-improvement configs.
     *sim_improvement_config.get_sim_improvement_configs(),
+    # Patrick (Zarr + URPolicy) configs.
+    *patrick_config.get_patrick_configs(),
 ]
 
 if len({config.name for config in _CONFIGS}) != len(_CONFIGS):

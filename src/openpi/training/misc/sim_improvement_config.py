@@ -261,6 +261,7 @@ class MDSDataConfig:
                     _transforms.RepackTransform(
                         {
                             "observation/exterior_image_1_left": "observation/image",
+                            "observation/exterior_image_2_left": "observation/side_image",
                             "observation/wrist_image_left": "observation/wrist_image",
                             "observation/joint_position": "observation/arm_jp",
                             "observation/gripper_position": "observation/gripper_jp",

@@ -3663,7 +3663,6 @@ dependencies = [
     { name = "imageio" },
     { name = "jax", extra = ["cuda12"] },
     { name = "jaxtyping" },
-    { name = "lerobot" },
     { name = "ml-collections" },
     { name = "mosaicml-streaming" },
     { name = "numpy" },
@@ -3694,6 +3693,9 @@ dev = [
     { name = "pytest" },
     { name = "ruff" },
 ]
+lerobot = [
+    { name = "lerobot" },
+]
 mds = [
     { name = "mosaicml-streaming" },
 ]
@@ -3718,7 +3720,6 @@ requires-dist = [
     { name = "imageio", specifier = ">=2.36.1" },
     { name = "jax", extras = ["cuda12"], specifier = "==0.5.3" },
     { name = "jaxtyping", specifier = "==0.2.36" },
-    { name = "lerobot", git = "https://github.com/huggingface/lerobot?rev=0cf864870cf29f4738d3ade893e6fd13fbd7cdb5" },
     { name = "ml-collections", specifier = "==1.0.0" },
     { name = "mosaicml-streaming", specifier = ">=0.13.0" },
     { name = "numpy", specifier = ">=1.22.4,<2.0.0" },
@@ -3749,6 +3750,7 @@ dev = [
     { name = "pytest", specifier = ">=8.3.4" },
     { name = "ruff", specifier = ">=0.8.6" },
 ]
+lerobot = [{ name = "lerobot", git = "https://github.com/huggingface/lerobot?rev=0cf864870cf29f4738d3ade893e6fd13fbd7cdb5" }]
 mds = [{ name = "mosaicml-streaming", specifier = ">=0.7" }]
 rlds = [
     { name = "dlimp", git = "https://github.com/kvablack/dlimp?rev=ad72ce3a9b414db2185bc0b38461d4101a65477a" },

@@ -53,7 +53,7 @@ class ZarrDatasetConfig:
         "data/obs/last_gripper_action",
     )
     episode_ends_key: str = "meta/episode_ends"
-    default_prompt: str = ""
+    # default_prompt: str = "pick up peg and insert into peghole, softly and gently"
 
 
 class ZarrDataset:
@@ -72,7 +72,7 @@ class ZarrDataset:
         action_chunk_size: int = 16,
         shuffle_buffer_size: int = 10_000,
         config: ZarrDatasetConfig | None = None,
-        preload: bool = True,
+        preload: bool = False,
     ):
         import zarr
 
@@ -123,7 +123,7 @@ class ZarrDataset:
         cfg = self.config
         demo: dict[str, Any] = {
             "actions": np.array(store[cfg.action_key][start:end]),
-            "prompt": cfg.default_prompt,
+            # "prompt": cfg.default_prompt,
         }
         for name, key in cfg.image_keys.items():
             if key in store:
@@ -191,7 +191,7 @@ class ZarrDataset:
                 yield {
                     "actions": action_chunks[t],
                     "observation": obs,
-                    "prompt": demo["prompt"],
+                    # "prompt": "", # demo["prompt"],
                 }
 
     def _collate_batch(self, samples: list[dict]) -> dict:
@@ -202,7 +202,7 @@ class ZarrDataset:
         return {
             "actions": np.stack([s["actions"] for s in samples]),
             "observation": batch_obs,
-            "prompt": np.array([s["prompt"] for s in samples]),
+            # "prompt": np.array([s["prompt"] for s in samples]),
         }
 
     def __iter__(self):
@@ -283,5 +283,5 @@ if __name__ == "__main__":
                 print(f"  {k}: shape={v.shape} dtype={v.dtype}")
             else:
                 print(f"  {k}: {v[:2]}...")
-        if i >= 2:
+        if i >= 20:
             break

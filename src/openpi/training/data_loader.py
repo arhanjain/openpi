@@ -7,7 +7,6 @@ from typing import Literal, Protocol, SupportsIndex, TypeVar
 
 import jax
 import jax.numpy as jnp
-import lerobot.common.datasets.lerobot_dataset as lerobot_dataset
 import numpy as np
 import torch
 
@@ -128,6 +127,19 @@ class FakeDataset(Dataset):
         return self._num_samples
 
 
+def _require_lerobot():
+    try:
+        import lerobot.common.datasets.lerobot_dataset as lerobot_dataset  # type: ignore
+    except ModuleNotFoundError as e:
+        raise ModuleNotFoundError(
+            "LeRobot is required for LeRobot-format datasets but is not installed.\n\n"
+            "If you only want to train from RLDS/Zarr/HDF5/MDS configs, you can install without it.\n"
+            "If you want LeRobot datasets, install the optional dependency group, e.g.:\n"
+            "  `uv sync --extra lerobot`\n"
+        ) from e
+    return lerobot_dataset
+
+
 def create_torch_dataset(
     data_config: _config.DataConfig, action_horizon: int, model_config: _model.BaseModelConfig
 ) -> Dataset:
@@ -138,6 +150,7 @@ def create_torch_dataset(
     if repo_id == "fake":
         return FakeDataset(model_config, num_samples=1024)
 
+    lerobot_dataset = _require_lerobot()
     dataset_meta = lerobot_dataset.LeRobotDatasetMetadata(repo_id)
     dataset = lerobot_dataset.LeRobotDataset(
         data_config.repo_id,
